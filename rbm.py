@@ -34,7 +34,8 @@ class RBMBernoulli(tf.keras.layers.Layer):
 		    hidden_units (int): Number of hidden units (latent variables)
 		"""
 		super(RBMBernoulli, self).__init__()
-		self.hidden_units = hidden_units
+		self.h = tf.keras.initializers.GlorotNormal()(shape=(hidden_units, 1))
+		self.b = tf.zeros(shape=(hidden_units, 1))
 
 	def build (self, input_shape):
 		""" Receive the shape of the input
@@ -45,7 +46,8 @@ class RBMBernoulli(tf.keras.layers.Layer):
 		    input_shape (tuple[int]): Input shape
 		"""
 		#input_shape = NHWC = (Batch, Height, Weight, Channels)
-		flat_shape = input_shape[1] * input_shape[2] * input_shape[3]
+		self.flat_shape = input_shape[1] * input_shape[2] * input_shape[3]
+		self.a = tf.zeros(shape=(self.flat_shape, 1))
 
 	def call(self, inputs):
 		""" Receive input and transform it
@@ -55,8 +57,16 @@ class RBMBernoulli(tf.keras.layers.Layer):
 		Args:
 		    inputs (tf.Tensor): Input Tensor
 		"""
+
+		# TODO: assure that inputs shape are always equal to flat_shape
+		self.v = tf.reshape(inputs, [-1, self.flat_shape])
+
+
+	def v_given_h(self):
 		pass
 
+	def h_given_v(self):
+		pass
 
 
 ## [!] Just for testing
