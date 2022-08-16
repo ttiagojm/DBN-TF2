@@ -28,14 +28,19 @@ class RBMBernoulli(tf.keras.layers.Layer):
 					(Fischer, Asja and Igel, Christian, 2012)
 	"""
 
-	def __init__(self, hidden_units: int):
+	def __init__(self, hidden_units: int, k=1, lr=0.01):
 		"""
 		Args:
 		    hidden_units (int): Number of hidden units (latent variables)
+		    k (int): Number of Gibbs Samplings
+		    lr (float): Learning rate
 		"""
 		super(RBMBernoulli, self).__init__()
 		self.h = tf.keras.initializers.GlorotNormal()(shape=(hidden_units, 1))
 		self.b = tf.zeros(shape=(hidden_units, 1))
+
+		self.k = k
+		self.lr = lr
 
 	def build (self, input_shape):
 		""" Receive the shape of the input
@@ -48,6 +53,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
 		#input_shape = NHWC = (Batch, Height, Weight, Channels)
 		self.flat_shape = input_shape[1] * input_shape[2] * input_shape[3]
 		self.a = tf.zeros(shape=(self.flat_shape, 1))
+		self.W = tf.keras.initializers.GlorotNormal()(shape=(self.flat_shape, tf.shape(self.h)[0]))
 
 	def call(self, inputs):
 		""" Receive input and transform it
@@ -58,18 +64,39 @@ class RBMBernoulli(tf.keras.layers.Layer):
 		    inputs (tf.Tensor): Input Tensor
 		"""
 
-		# TODO: assure that inputs shape are always equal to flat_shape
+		#📝TODO: assure that inputs shape are always equal to flat_shape
 		self.v = tf.reshape(inputs, [-1, self.flat_shape])
 
+		self.k_gibbs_sampling()
+		self.contrastive_divergence()
+
+		#❗Returning v just for testing, must return h
+		return self.v
+
+
+	def contrastive_divergence(self):
+		h_init = self.h_given_v(self.v_init)
+
+		self.W = self.W + self.lr * (tf.linalg.matmul(self.v_init, tf.transpose(h_init)) - tf.linalg.matmul(self.v, tf.transpose(self.h)) )
+		self.a = self.a + self.lr * (self.v_init - self.v)
+		self.b - self.b + self.lr * (h_init - self.h)
+	
+	def k_gibbs_sampling(self):
+		# Save initial input (tf.identity == np.copy)
+		self.v_init = tf.identity(self.v)
+
+		for _ in range(self.k):
+			self.h = self.h_given_v(self.v)
+			self.v = self.v_given_h()	
 
 	def v_given_h(self):
-		pass
+		return tf.math.sigmoid(self.a + tf.linalg.matmul(self.W, self.h))
 
-	def h_given_v(self):
-		pass
+	def h_given_v(self, v):
+		return tf.math.sigmoid(self.b + tf.linalg.matmul(tf.transpose(self.W), v))
 
 
-## [!] Just for testing
+##❗Just for testing
 
 # Get one image from cifar-10
 (img, ), ds_info = tfds.load(
@@ -84,9 +111,13 @@ in_size = ds_info.features["image"].shape
 normalizer = tf.keras.layers.Rescaling(1.0 / 255)
 
 # Ignore y (image class), only need the image
-norm_img = img.map(lambda x, y: normalizer(x))
+# Is irrelevant batch here (talking about performance), but for shapes match it's required
+norm_img = img.map(lambda x, y: normalizer(x)).batch(32)
 
 model = tf.keras.Sequential([
 	tf.keras.Input(shape=in_size),
 	RBMBernoulli(hidden_units=28)
 ])
+
+# Pass one image to the model
+model(next(iter(norm_img)))
