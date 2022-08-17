@@ -1,5 +1,6 @@
 import tensorflow as tf
 
+
 class RBMBernoulli(tf.keras.layers.Layer):
 
     """Class that represents a Discrete Restricted Boltzman Machine (Bernoulli)
@@ -36,8 +37,8 @@ class RBMBernoulli(tf.keras.layers.Layer):
         """
         super(RBMBernoulli, self).__init__()
 
-        self.h = tf.Variable( tf.zeros(shape=(hidden_units, 1)), name='h')
-        self.b = tf.Variable( tf.zeros(shape=(hidden_units, 1)), name='b')
+        self.h = tf.Variable(tf.zeros(shape=(hidden_units, 1)), name='h')
+        self.b = tf.Variable(tf.zeros(shape=(hidden_units, 1)), name='b')
 
         self.k = k
         self.lr = lr
@@ -55,21 +56,27 @@ class RBMBernoulli(tf.keras.layers.Layer):
         self.flat_shape = input_shape[1] * input_shape[2] * input_shape[3]
 
         # Save the original shape to reshape input in __call__
-        self.width, self.height, self.channels = input_shape[2], input_shape[1], input_shape[3]
+        self.width, self.height, self.channels = (
+            input_shape[2],
+            input_shape[1],
+            input_shape[3],
+        )
 
+        self.a = tf.Variable(tf.zeros(shape=(self.flat_shape, 1)), name='a')
 
-        self.a = tf.Variable( tf.zeros(shape=(self.flat_shape, 1)), name='a')
-        
         # Sampling N(μ=0, σ=0.1) to initialize weights
-        self.W = tf.Variable( tf.random.normal(
-            shape=(self.flat_shape, tf.shape(self.h)[0]), stddev=0.1
-        ), name='W')
+        self.W = tf.Variable(
+            tf.random.normal(
+                shape=(self.flat_shape, tf.shape(self.h)[0]), stddev=0.1
+            ),
+            name='W',
+        )
 
     def call(self, inputs):
         """Receive input and transform it
 
                 This is the place where we call other functions to calculate conditionals and reconstruct input
-                
+
                 NOTE: Batch are not supported for now
         Args:
             inputs (tf.Tensor): Input Tensor
@@ -84,19 +91,19 @@ class RBMBernoulli(tf.keras.layers.Layer):
             self.contrastive_divergence()
 
         # Return reconstructed input reshape to the original shape
-        return self.sample_binary_prob( tf.reshape(self.v, [self.height, self.width, self.channels]) )
-
+        return self.sample_binary_prob(
+            tf.reshape(self.v, [self.height, self.width, self.channels])
+        )
 
     def k_gibbs_sampling(self):
-        """ Function to sample h₍₀₎ from v₍₀₎, v₍₁₎ from h₍₀₎ ... v₍ₖ₊₁₎ from h₍ₖ₎
-        """
+        """Function to sample h₍₀₎ from v₍₀₎, v₍₁₎ from h₍₀₎ ... v₍ₖ₊₁₎ from h₍ₖ₎"""
         # Save initial input (tf.identity == np.copy)
         self.v_init = tf.identity(self.v)
 
         for _ in range(self.k):
             # h ~ p(h | v)
             self.h = self.h_given_v(self.v)
-            
+
             # v ~ p(v | h)
             self.v = self.v_given_h()
 
@@ -104,31 +111,33 @@ class RBMBernoulli(tf.keras.layers.Layer):
         # h ~ p(h = 1 | v)
         self.h = self.sample_binary_prob(self.h)
 
-    
     def contrastive_divergence(self):
         """Function to approximate the gradient where we have a positive(ϕ⁺) and negative(ϕ⁻) grad.
 
-            ϕ⁻ = p(h₍ₜ₎ = 1 | v₍ₜ₎) ⋅ v₍ₜ₎
-            ϕ⁺ = p(h₍₀₎ = 1 | v₍₀₎ ⋅ v₍₀₎
+        ϕ⁻ = p(h₍ₜ₎ = 1 | v₍ₜ₎) ⋅ v₍ₜ₎
+        ϕ⁺ = p(h₍₀₎ = 1 | v₍₀₎ ⋅ v₍₀₎
 
-            ϕ⁺ - ϕ⁻ is the constrastive divergence which approximate the derivation of maximum log-likelihood
+        ϕ⁺ - ϕ⁻ is the constrastive divergence which approximate the derivation of maximum log-likelihood
         """
-        
-        # h₍₀₎ ~ p(h₍₀₎ = 1 | v₍₀₎)
-        h_init = self.sample_binary_prob( self.h_given_v(self.v_init) )
 
-        self.W.assign(self.lr * (
-            tf.linalg.matmul(self.v_init, tf.transpose(h_init))
-            - tf.linalg.matmul(self.v, tf.transpose(self.h))
-        ))
+        # h₍₀₎ ~ p(h₍₀₎ = 1 | v₍₀₎)
+        h_init = self.sample_binary_prob(self.h_given_v(self.v_init))
+
+        self.W.assign(
+            self.lr
+            * (
+                tf.linalg.matmul(self.v_init, tf.transpose(h_init))
+                - tf.linalg.matmul(self.v, tf.transpose(self.h))
+            )
+        )
         self.a.assign(self.lr * (self.v_init - self.v))
         self.b.assign(self.lr * (h_init - self.h))
 
     def v_given_h(self):
         """Function that implements the conditional probability:
-            
+
             P(v | h) = σ( b + ∑ v⋅W )
-        
+
         Returns:
             Tensor: Tensor of shape [tf.shape(v)[0], 1]
         """
@@ -136,13 +145,13 @@ class RBMBernoulli(tf.keras.layers.Layer):
 
     def h_given_v(self, v):
         """Function that implements the conditional probability:
-            
+
 
             P(h | v) = σ( a + ∑ h⋅W )
 
         Args:
             Tensor: Tensor of shape [tf.shape(v)[0], 1]
-        
+
         Returns:
             Tensor: Tensor of shape [tf.shape(h)[0], 1]
         """
@@ -151,8 +160,8 @@ class RBMBernoulli(tf.keras.layers.Layer):
         )
 
     def sample_binary_prob(self, probs):
-        """ Function that transform probabilities [0,1] into a binary Tensor ( set of {0,1} )
-            
+        """Function that transform probabilities [0,1] into a binary Tensor ( set of {0,1} )
+
             Here we calculate the probability of a certain element of the probs Tensor being selected
             (Uniform Dist. sampling)
 
@@ -169,7 +178,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
 
         Args:
             probs (Tensor): Tensor with probabilitites [0,1]
-        
+
         Returns:
             Tensor: Tensor with binary probabilities
         """
