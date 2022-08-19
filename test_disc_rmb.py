@@ -29,7 +29,7 @@ norm_img = img.map(lambda x, y: normalizer(x)).batch(32)
 
 # Create a simple network with only a 1 hidden layer RBM
 model = tf.keras.Sequential(
-    [tf.keras.Input(shape=in_size), RBMBernoulli(hidden_units=6000)]
+    [tf.keras.Input(shape=in_size), RBMBernoulli(hidden_units=650, lr=.1)]
 )
 
 # Pass the image to the model
@@ -46,5 +46,5 @@ for i, batch in enumerate(norm_img):
     # Show reconstructed image (gray is inverted because prob = 1 means pixel colored and prob = 0 pixel uncolored)
     # Because 255 * 1 = 255 which is white and 255 * 0 = 0 which is black, we invert the grayscale here
     new = unormalizer(x).numpy()
-    plt.imshow(new, cmap="gray_r", interpolation='nearest')
+    plt.imshow(new, cmap="gray", interpolation='nearest')
     plt.show()

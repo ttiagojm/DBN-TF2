@@ -62,6 +62,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
             input_shape[3],
         )
 
+        self.v = tf.Variable(tf.zeros(shape=(self.flat_shape, 1)), name='v')
         self.a = tf.Variable(tf.zeros(shape=(self.flat_shape, 1)), name='a')
 
         # Sampling N(μ=0, σ=0.1) to initialize weights
@@ -86,30 +87,29 @@ class RBMBernoulli(tf.keras.layers.Layer):
         for b in range(tf.shape(inputs)[0]):
 
             # Reshape (remove batch dimension) to be valid during math operations
-            self.v = tf.reshape(inputs[b], [self.flat_shape, 1])
+            self.v.assign(tf.reshape(inputs[b], [self.flat_shape, 1]))
             self.k_gibbs_sampling()
             self.contrastive_divergence()
 
+        # Update reconstruction with new weights
+        self.v.assign(self.v_given_h())
+
         # Return reconstructed input reshape to the original shape
-        return self.sample_binary_prob(
-            tf.reshape(self.v, [self.height, self.width, self.channels])
-        )
+        return tf.reshape(self.v, [self.height, self.width, self.channels])
 
     def k_gibbs_sampling(self):
         """Function to sample h₍₀₎ from v₍₀₎, v₍₁₎ from h₍₀₎ ... v₍ₖ₊₁₎ from h₍ₖ₎"""
+        
         # Save initial input (tf.identity == np.copy)
         self.v_init = tf.identity(self.v)
 
         for _ in range(self.k):
             # h ~ p(h | v)
-            self.h = self.h_given_v(self.v)
+            self.h.assign(self.h_given_v(self.v))
 
             # v ~ p(v | h)
-            self.v = self.v_given_h()
+            self.v.assign(self.v_given_h())
 
-        # Update h to have binary values
-        # h ~ p(h = 1 | v)
-        self.h = self.sample_binary_prob(self.h)
 
     def contrastive_divergence(self):
         """Function to approximate the gradient where we have a positive(ϕ⁺) and negative(ϕ⁻) grad.
@@ -120,18 +120,21 @@ class RBMBernoulli(tf.keras.layers.Layer):
         ϕ⁺ - ϕ⁻ is the constrastive divergence which approximate the derivation of maximum log-likelihood
         """
 
-        # h₍₀₎ ~ p(h₍₀₎ = 1 | v₍₀₎)
-        h_init = self.sample_binary_prob(self.h_given_v(self.v_init))
+        # h ~ p(h₍ₜ₎ = 1 | v₍ₜ₎)
+        h_bin = self.sample_binary_prob( self.h )
 
-        self.W.assign(
+        # h ~ p(h₍₀₎ = 1 | v₍₀₎)
+        h_init = self.sample_binary_prob( self.h_given_v(self.v_init) )
+
+        self.W.assign_add(
             self.lr
             * (
                 tf.linalg.matmul(self.v_init, tf.transpose(h_init))
-                - tf.linalg.matmul(self.v, tf.transpose(self.h))
+                - tf.linalg.matmul(self.v, tf.transpose(h_bin))
             )
         )
-        self.a.assign(self.lr * (self.v_init - self.v))
-        self.b.assign(self.lr * (h_init - self.h))
+        self.a.assign_add(self.lr * (self.v_init - self.v))
+        self.b.assign_add(self.lr * (h_init - h_bin))
 
     def v_given_h(self):
         """Function that implements the conditional probability:
