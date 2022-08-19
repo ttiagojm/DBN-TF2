@@ -37,8 +37,8 @@ class RBMBernoulli(tf.keras.layers.Layer):
         """
         super(RBMBernoulli, self).__init__()
 
-        self.h = tf.Variable(tf.zeros(shape=(hidden_units, 1)), name='h')
-        self.b = tf.Variable(tf.zeros(shape=(hidden_units, 1)), name='b')
+        self.h = tf.Variable(tf.zeros(shape=(hidden_units, 1)), name="h")
+        self.b = tf.Variable(tf.zeros(shape=(hidden_units, 1)), name="b")
 
         self.k = k
         self.lr = lr
@@ -62,15 +62,15 @@ class RBMBernoulli(tf.keras.layers.Layer):
             input_shape[3],
         )
 
-        self.v = tf.Variable(tf.zeros(shape=(self.flat_shape, 1)), name='v')
-        self.a = tf.Variable(tf.zeros(shape=(self.flat_shape, 1)), name='a')
+        self.v = tf.Variable(tf.zeros(shape=(self.flat_shape, 1)), name="v")
+        self.a = tf.Variable(tf.zeros(shape=(self.flat_shape, 1)), name="a")
 
         # Sampling N(μ=0, σ=0.1) to initialize weights
         self.W = tf.Variable(
             tf.random.normal(
                 shape=(self.flat_shape, tf.shape(self.h)[0]), stddev=0.1
             ),
-            name='W',
+            name="W",
         )
 
     def call(self, inputs):
@@ -99,7 +99,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
 
     def k_gibbs_sampling(self):
         """Function to sample h₍₀₎ from v₍₀₎, v₍₁₎ from h₍₀₎ ... v₍ₖ₊₁₎ from h₍ₖ₎"""
-        
+
         # Save initial input (tf.identity == np.copy)
         self.v_init = tf.identity(self.v)
 
@@ -109,7 +109,6 @@ class RBMBernoulli(tf.keras.layers.Layer):
 
             # v ~ p(v | h)
             self.v.assign(self.v_given_h())
-
 
     def contrastive_divergence(self):
         """Function to approximate the gradient where we have a positive(ϕ⁺) and negative(ϕ⁻) grad.
@@ -121,10 +120,10 @@ class RBMBernoulli(tf.keras.layers.Layer):
         """
 
         # h ~ p(h₍ₜ₎ = 1 | v₍ₜ₎)
-        h_bin = self.sample_binary_prob( self.h )
+        h_bin = self.sample_binary_prob(self.h)
 
         # h ~ p(h₍₀₎ = 1 | v₍₀₎)
-        h_init = self.sample_binary_prob( self.h_given_v(self.v_init) )
+        h_init = self.sample_binary_prob(self.h_given_v(self.v_init))
 
         self.W.assign_add(
             self.lr
