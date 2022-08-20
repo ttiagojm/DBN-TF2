@@ -24,7 +24,7 @@ If you try with more data like 10% of training samples:
 You'll notice that perfection was lost...
 
 
-![Original Image](images/10%_original_img_train.png) | ![Reconstructed Image](images/10%_reconstruct_img_train.png)
+![Original Image](images/10perc_original_img_train.png) | ![Reconstructed Image](images/10perc_reconstruct_img_train.png)
 
 Increase `hidden_units` can help getting better results but nothing noticeable.
 
