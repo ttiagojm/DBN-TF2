@@ -1,4 +1,5 @@
 import tensorflow as tf
+import time
 
 
 class RBMBernoulli(tf.keras.layers.Layer):
@@ -184,4 +185,21 @@ class RBMBernoulli(tf.keras.layers.Layer):
         Returns:
             Tensor: Tensor with binary probabilities
         """
+
+        ## We could use: return tf.reshape(tf.map_fn(lambda x: 1. if x > 0.5 else 0., probs), [-1,1])
+        ## If sigmoid prob. is less then 0.5 is 0 then is 1, but it's more efficient the function below
         return tf.nn.relu(tf.sign(probs - tf.random.uniform(tf.shape(probs))))
+
+    def get_output(self, x):
+
+        if len(tf.shape(x)) != 3:
+            print("[!] Wrong shape!")
+            return x
+
+        self.v.assign(tf.reshape(x, [self.flat_shape, 1]))
+
+        # Update reconstruction with new weights
+        self.v.assign(self.v_given_h())
+
+        # Return reconstructed input reshape to the original shape
+        return tf.reshape(self.v, [self.height, self.width, self.channels])
