@@ -8,7 +8,7 @@ from discrete_rbm import RBMBernoulli
 # Get one image from mnist
 (img,), ds_info = tfds.load(
     "mnist",
-    split=["train[:1]"],
+    split=["train[:10%]"],
     as_supervised=True,
     with_info=True,
 )

@@ -92,11 +92,8 @@ class RBMBernoulli(tf.keras.layers.Layer):
             self.k_gibbs_sampling()
             self.contrastive_divergence()
 
-        # Update reconstruction with new weights
-        self.v.assign(self.v_given_h())
-
-        # Return reconstructed input reshape to the original shape
-        return tf.reshape(self.v, [self.height, self.width, self.channels])
+        # Return the input for next RBM
+        return self.h
 
     def k_gibbs_sampling(self):
         """Function to sample h₍₀₎ from v₍₀₎, v₍₁₎ from h₍₀₎ ... v₍ₖ₊₁₎ from h₍ₖ₎"""
@@ -196,9 +193,8 @@ class RBMBernoulli(tf.keras.layers.Layer):
             print("[!] Wrong shape!")
             return x
 
-        self.v.assign(tf.reshape(x, [self.flat_shape, 1]))
-
         # Update reconstruction with new weights
+        self.h.assign(self.h_given_v(tf.reshape(x, [self.flat_shape, 1])))
         self.v.assign(self.v_given_h())
 
         # Return reconstructed input reshape to the original shape
