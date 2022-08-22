@@ -12,7 +12,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
     The joint probability is the exponential of -E(v,h) divided by the partition function (to transform energies in
     probabilities)
 
-    Partition functions are computationally expensive to calculate (lots of sums) and derivative (in case of
+    Partition functions are computationally expensive to calculate (lots of sums) and derive (in case of
     deriving the max log-likelihood)
 
     To prevent that conditionals are used to:
@@ -79,7 +79,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
 
                 This is the place where we call other functions to calculate conditionals and reconstruct input
 
-                NOTE: Batch are not supported for now
+                ❗NOTE: Batch images are being processed individually to help with matmul logics
         Args:
             inputs (tf.Tensor): Input Tensor
         """
@@ -188,12 +188,24 @@ class RBMBernoulli(tf.keras.layers.Layer):
         return tf.nn.relu(tf.sign(probs - tf.random.uniform(tf.shape(probs))))
 
     def get_output(self, x):
+        """Function to return the reconstruction of x based on W, a and b learned previously
 
-        if len(tf.shape(x)) != 3:
+        Args:
+            x (Tensor): Input Tensor
+
+        Returns:
+            Tensor: Reconstructed Input Tensor
+        """
+
+        # Validate if image doesn't has batch dim
+        try:
+            if len(tf.shape(x)) != 3:
+                raise NotImplemented
+        except NotImplemented as e:
             print("[!] Wrong shape!")
-            return x
+            sys.exit(-1)
 
-        # Update reconstruction with new weights
+        # Update reconstruction with new weights (Gibbs Sampling)
         self.h.assign(self.h_given_v(tf.reshape(x, [self.flat_shape, 1])))
         self.v.assign(self.v_given_h())
 

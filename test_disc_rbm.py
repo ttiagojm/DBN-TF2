@@ -5,7 +5,7 @@ from discrete_rbm import RBMBernoulli
 
 ##❗Just for testing
 
-# Get one image from mnist
+# Get images from mnist
 (img,), ds_info = tfds.load(
     "mnist",
     split=["train[:10%]"],
@@ -35,6 +35,7 @@ norm_img = (
 model = tf.keras.Sequential(
     [
         tf.keras.Input(shape=in_size),
+        # Using only a 1/4 of input units to reproduce input
         RBMBernoulli(hidden_units=(in_size[0] * in_size[1]) // 4, lr=0.1),
     ]
 )
