@@ -1,4 +1,3 @@
-from utils import mean_batch
 import tensorflow as tf
 import time
 
@@ -131,12 +130,12 @@ class RBMBernoulli(tf.keras.layers.Layer):
 
         mul_init_curr = (tf.matmul(v_init_r, h_init_r) - tf.matmul(v_r, h_bin_r))
 
-        # mean_batch will sum along batch axis and divide by batch_size 
-        self.W.assign_add( self.lr * mean_batch(mul_init_curr, self.batch_size))
-        self.a.assign_add(self.lr * mean_batch(v_init - v, self.batch_size))
-        self.b.assign_add(self.lr * mean_batch(h_init - h_bin, self.batch_size))
-
-        return h_init
+        # Average each value along batch axis
+        self.W.assign_add( self.lr * tf.reduce_mean(mul_init_curr, axis=0))
+        self.a.assign_add(self.lr * tf.reduce_mean(v_init - v, axis=0))
+        self.b.assign_add(self.lr * tf.reduce_mean(h_init - h_bin, axis=0))
+        
+        return h_bin
 
     def v_given_h(self, h):
         """Function that implements the conditional probability:
