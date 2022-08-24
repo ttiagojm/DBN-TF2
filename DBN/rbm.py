@@ -51,6 +51,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
             input_shape (tuple[int]): Input shape
         """
 
+        # ❗ TODO: Validate if inputs is 4-rank or 2-rank (doesn't need flat_shape neither original shape)
         # input_shape = NHWC = (Batch, Height, Weight, Channels)
         self.flat_shape = input_shape[1] * input_shape[2] * input_shape[3]
 
@@ -70,22 +71,12 @@ class RBMBernoulli(tf.keras.layers.Layer):
     def call(self, inputs, trainable=False):
         """Receive input and transform it
 
-                This is the place where we call other functions to calculate conditionals and reconstruct input
-
-                ❗NOTE: Batch images are being processed individually to help with matmul logics
+                This is the place where we call other functions to calculate conditionals probs. and reconstruct input
         Args:
             inputs (tf.Tensor): Input Tensor
         """
 
-        # # Loop over all samples in batch
-        # for b in range(tf.shape(inputs)[0]):
-
-        #     # Reshape (remove batch dimension) to be valid during math operations
-        #     self.v.assign(tf.reshape(inputs[b], [self.flat_shape, 1]))
-        #     self.contrastive_divergence()
-
-        self.batch_size = tf.shape(inputs)[0]
-
+        # ❗ TODO: Validate if inputs is 4-rank or 2-rank (doesn't need flat reshape)
         inputs = tf.reshape(inputs, [-1, self.flat_shape])
 
         # Return the input for next RBM
@@ -122,16 +113,11 @@ class RBMBernoulli(tf.keras.layers.Layer):
 
         ## Constrastive Divergence
 
-        # Reshape all vectors to have an extra dim to be able to matmul with W matrix
-        # ❗TODO: Probably redo this operations using TF functions instead of built-in Python ones
-        h_init_r,h_bin_r = list( map( lambda x: tf.expand_dims(x, axis=-2), [h_init,h_bin] ) )
-        v_init_r,v_r = list( map( lambda x: tf.expand_dims(x, axis=-1), [v_init,v] ) )
+        # Tensordot allow to do matmul fixed in axes, in this case, fixed in batch axis
+        mul_init_curr = tf.tensordot(v_init, h_init, axes=[0, 0]) - tf.tensordot(v, h_bin, axes=[0, 0])
+        self.W.assign_add( self.lr * mul_init_curr)
         
-
-        mul_init_curr = (tf.matmul(v_init_r, h_init_r) - tf.matmul(v_r, h_bin_r))
-
         # Average each value along batch axis
-        self.W.assign_add( self.lr * tf.reduce_mean(mul_init_curr, axis=0))
         self.a.assign_add(self.lr * tf.reduce_mean(v_init - v, axis=0))
         self.b.assign_add(self.lr * tf.reduce_mean(h_init - h_bin, axis=0))
         
