@@ -8,15 +8,12 @@ from inspect import signature, _empty
 
 """
 
-mean_batch = lambda t, b: tf.reduce_sum(t, axis=0)/tf.cast(b, dtype=tf.float32)
-
 def show_batch_images(batch, unorm_fn, num_imgs=5):
 	for img in batch[:num_imgs]:
 		i = unorm_fn(img).numpy()
 
 		plt.imshow(i, cmap="gray", interpolation="nearest")
 		plt.show()
-
 
 
 """
