@@ -1,14 +1,14 @@
 import tensorflow as tf
 import tensorflow_datasets as tfds
-import matplotlib.pyplot as plt
-from discrete_rbm import RBMBernoulli
+from rbm import RBMBernoulli
+from utils import show_batch_images
 
-##❗Just for testing
+##❗Just for testing Discrete RBM
 
 # Get images from mnist
 (img,), ds_info = tfds.load(
     "mnist",
-    split=["train[:10%]"],
+    split=["train[:5%]"],
     as_supervised=True,
     with_info=True,
 )
@@ -52,12 +52,11 @@ batch = next(iter(norm_img))
 
 rbm = model.layers[0]
 
-original = unormalizer(batch[0]).numpy()
-plt.imshow(original, cmap="gray", interpolation="nearest")
-plt.show()
+# Show the first 5 images
+show_batch_images(batch, unormalizer)
 
-x = rbm.get_output(batch[0])
+# Took only the first 5 images
+x = rbm.get_output(batch)
 
-new = unormalizer(x).numpy()
-plt.imshow(new, cmap="gray", interpolation="nearest")
-plt.show()
+# Show the first 5 reconsctructed images
+show_batch_images(x, unormalizer)

@@ -1,3 +1,4 @@
+from utils import mean_batch
 import tensorflow as tf
 import time
 
@@ -38,9 +39,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
         """
         super(RBMBernoulli, self).__init__()
 
-        self.h = tf.Variable(tf.zeros(shape=(hidden_units, 1)), name="h")
-        self.b = tf.Variable(tf.zeros(shape=(hidden_units, 1)), name="b")
-
+        self.hidden_units = hidden_units
         self.k = k
         self.lr = lr
 
@@ -63,18 +62,13 @@ class RBMBernoulli(tf.keras.layers.Layer):
             input_shape[3],
         )
 
-        self.v = tf.Variable(tf.zeros(shape=(self.flat_shape, 1)), name="v")
-        self.a = tf.Variable(tf.zeros(shape=(self.flat_shape, 1)), name="a")
-
+        self.b = tf.Variable(tf.zeros(shape=(self.hidden_units,)), name="b")
+        self.a = tf.Variable(tf.zeros(shape=(self.flat_shape,)), name="a")
+        
         # Sampling N(μ=0, σ=0.1) to initialize weights
-        self.W = tf.Variable(
-            tf.random.normal(
-                shape=(self.flat_shape, tf.shape(self.h)[0]), stddev=0.1
-            ),
-            name="W",
-        )
+        self.W = tf.Variable(tf.random.normal(shape=(self.flat_shape, self.hidden_units), stddev=0.1),name="W")
 
-    def call(self, inputs):
+    def call(self, inputs, trainable=False):
         """Receive input and transform it
 
                 This is the place where we call other functions to calculate conditionals and reconstruct input
@@ -84,31 +78,21 @@ class RBMBernoulli(tf.keras.layers.Layer):
             inputs (tf.Tensor): Input Tensor
         """
 
-        # Loop over all samples in batch
-        for b in range(tf.shape(inputs)[0]):
+        # # Loop over all samples in batch
+        # for b in range(tf.shape(inputs)[0]):
 
-            # Reshape (remove batch dimension) to be valid during math operations
-            self.v.assign(tf.reshape(inputs[b], [self.flat_shape, 1]))
-            self.k_gibbs_sampling()
-            self.contrastive_divergence()
+        #     # Reshape (remove batch dimension) to be valid during math operations
+        #     self.v.assign(tf.reshape(inputs[b], [self.flat_shape, 1]))
+        #     self.contrastive_divergence()
+
+        self.batch_size = tf.shape(inputs)[0]
+
+        inputs = tf.reshape(inputs, [-1, self.flat_shape])
 
         # Return the input for next RBM
-        return self.h
+        return self.contrastive_divergence(inputs)
 
-    def k_gibbs_sampling(self):
-        """Function to sample h₍₀₎ from v₍₀₎, v₍₁₎ from h₍₀₎ ... v₍ₖ₊₁₎ from h₍ₖ₎"""
-
-        # Save initial input (tf.identity == np.copy)
-        self.v_init = tf.identity(self.v)
-
-        for _ in range(self.k):
-            # h ~ p(h | v)
-            self.h.assign(self.h_given_v(self.v))
-
-            # v ~ p(v | h)
-            self.v.assign(self.v_given_h())
-
-    def contrastive_divergence(self):
+    def contrastive_divergence(self, v):
         """Function to approximate the gradient where we have a positive(ϕ⁺) and negative(ϕ⁻) grad.
 
         ϕ⁻ = p(h₍ₜ₎ = 1 | v₍ₜ₎) ⋅ v₍ₜ₎
@@ -117,31 +101,56 @@ class RBMBernoulli(tf.keras.layers.Layer):
         ϕ⁺ - ϕ⁻ is the constrastive divergence which approximate the derivation of maximum log-likelihood
         """
 
+
+        # Save initial input (tf.identity == np.copy)
+        v_init = tf.identity(v)
+
+        ## Gibbs Sampling
+        for _ in range(self.k):
+            # h ~ p(h | v)
+            h = self.h_given_v(v)
+
+            # v ~ p(v | h)
+            #self.v.assign(self.v_given_h(h))
+            v = self.v_given_h(h)
+
+
         # h ~ p(h₍ₜ₎ = 1 | v₍ₜ₎)
-        h_bin = self.sample_binary_prob(self.h)
+        h_bin = self.sample_binary_prob(h)
 
         # h ~ p(h₍₀₎ = 1 | v₍₀₎)
-        h_init = self.sample_binary_prob(self.h_given_v(self.v_init))
+        h_init = self.sample_binary_prob(self.h_given_v(v_init))
 
-        self.W.assign_add(
-            self.lr
-            * (
-                tf.linalg.matmul(self.v_init, tf.transpose(h_init))
-                - tf.linalg.matmul(self.v, tf.transpose(h_bin))
-            )
-        )
-        self.a.assign_add(self.lr * (self.v_init - self.v))
-        self.b.assign_add(self.lr * (h_init - h_bin))
+        ## Constrastive Divergence
 
-    def v_given_h(self):
+        # Reshape all vectors to have an extra dim to be able to matmul with W matrix
+        # ❗TODO: Probably redo this operations using TF functions instead of built-in Python ones
+        h_init_r,h_bin_r = list( map( lambda x: tf.expand_dims(x, axis=-2), [h_init,h_bin] ) )
+        v_init_r,v_r = list( map( lambda x: tf.expand_dims(x, axis=-1), [v_init,v] ) )
+        
+
+        mul_init_curr = (tf.matmul(v_init_r, h_init_r) - tf.matmul(v_r, h_bin_r))
+
+        # mean_batch will sum along batch axis and divide by batch_size 
+        self.W.assign_add( self.lr * mean_batch(mul_init_curr, self.batch_size))
+        self.a.assign_add(self.lr * mean_batch(v_init - v, self.batch_size))
+        self.b.assign_add(self.lr * mean_batch(h_init - h_bin, self.batch_size))
+
+        return h_init
+
+    def v_given_h(self, h):
         """Function that implements the conditional probability:
 
             P(v | h) = σ( b + ∑ v⋅W )
 
+        Args:
+            Tensor: Tensor of shape [tf.shape(h)[0]]
+
         Returns:
-            Tensor: Tensor of shape [tf.shape(v)[0], 1]
+            Tensor: Tensor of shape [tf.shape(v)[0]]
         """
-        return tf.math.sigmoid(self.a + tf.linalg.matmul(self.W, self.h))
+        W_t = tf.transpose(self.W, [1,0])
+        return tf.math.sigmoid(self.a + tf.matmul(h, W_t))
 
     def h_given_v(self, v):
         """Function that implements the conditional probability:
@@ -150,14 +159,12 @@ class RBMBernoulli(tf.keras.layers.Layer):
             P(h | v) = σ( a + ∑ h⋅W )
 
         Args:
-            Tensor: Tensor of shape [tf.shape(v)[0], 1]
+            Tensor: Tensor of shape [tf.shape(v)[0]]
 
         Returns:
-            Tensor: Tensor of shape [tf.shape(h)[0], 1]
+            Tensor: Tensor of shape [tf.shape(h)[0]]
         """
-        return tf.math.sigmoid(
-            self.b + tf.linalg.matmul(tf.transpose(self.W), v)
-        )
+        return tf.math.sigmoid(self.b + tf.matmul(v, self.W))
 
     def sample_binary_prob(self, probs):
         """Function that transform probabilities [0,1] into a binary Tensor ( set of {0,1} )
@@ -191,7 +198,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
         """Function to return the reconstruction of x based on W, a and b learned previously
 
         Args:
-            x (Tensor): Input Tensor
+            x (Tensor): Input Tensor with shape = (batch, height, width, channels)
 
         Returns:
             Tensor: Reconstructed Input Tensor
@@ -199,15 +206,15 @@ class RBMBernoulli(tf.keras.layers.Layer):
 
         # Validate if image doesn't has batch dim
         try:
-            if len(tf.shape(x)) != 3:
+            if tf.rank(x) != 4:
                 raise NotImplemented
         except NotImplemented as e:
-            print("[!] Wrong shape!")
+            print("[!] Shape should be 4-rank!")
             sys.exit(-1)
 
         # Update reconstruction with new weights (Gibbs Sampling)
-        self.h.assign(self.h_given_v(tf.reshape(x, [self.flat_shape, 1])))
-        self.v.assign(self.v_given_h())
+        h = self.h_given_v(tf.reshape(x, [-1, self.flat_shape]))
+        v = self.v_given_h(h)
 
         # Return reconstructed input reshape to the original shape
-        return tf.reshape(self.v, [self.height, self.width, self.channels])
+        return tf.reshape(v, [-1, self.height, self.width, self.channels])

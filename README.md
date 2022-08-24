@@ -7,26 +7,15 @@ Deep Belief Networks in Tensorflow 2
 <hr>
 
 ## Discrete Restricted Boltzman Machine
-`discrete_rbm.py` file contains the class where all logic and training code was implemented
-`test_disc_rbm.py` file has the purpose of testing the RBM implementation
+`DBN/rbm.py` file contains the class where all logic and training code was implemented
+`DBN/tests.py` file has the purpose of testing the RBM implementation
 
-By default only an image was used to train and test. Obviously the reconstruction is almost perfect.
+By default we train with 5% of training set and use 5 of this images to test if reconstruction is  good or not.
 
-![Original Image](images/1_original_img_train.png) | ![Reconstructed Image](images/1_reconstruct_img_train.png)
-
-If you try with more data like 10% of training samples:
-```
-	...
-	split=["train[:10%]"],
-	...
-```
-
-You'll notice that perfection was lost...
-
+The reconstruction is done with only 1/4 of input units!
 
 ![Original Image](images/10perc_original_img_train.png) | ![Reconstructed Image](images/10perc_reconstruct_img_train.png)
 
-Increase `hidden_units` can help getting better results but nothing noticeable.
 
 <hr>
 
