@@ -14,7 +14,7 @@ By default we train with 10% of training set and use 5% of it to get images for 
 
 The reconstruction is done with only 1/4 of input units!
 
-![Original Image](images/10perc_original_img_train.png) | ![Reconstructed Image](images/10perc_reconstruct_img_train.png)
+![Original Image](images/rbm_train_img.png) | ![Reconstructed Image](images/rbm_test_img.png)
 
 
 <hr>
@@ -29,4 +29,4 @@ Because `W` shape is `[Nᵥ-Nₕ+1, Nᵥ-Nₕ+1, K]` (where `Nᵥ` is input size
 
 That's why we set `Nₕ` almost equal `Nᵥ`.
 
-![Original Image](images/10perc_original_conv_img_train.png) | ![Reconstructed Image](images/10perc_reconstruct_conv_img_train.png)
+![Original Image](images/crbm_train_img.png) | ![Reconstructed Image](images/crbm_test_img.png)
