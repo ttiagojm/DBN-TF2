@@ -47,10 +47,10 @@ class RBMConv(tf.keras.layers.Layer):
         super(RBMConv, self).__init__()
 
         self.h = tf.Variable(
-            tf.zeros(shape=(1, hidden_units, hidden_units, n_filters)),
+            tf.zeros(shape=(hidden_units, hidden_units, n_filters)),
             name="h",
         )
-        self.b = tf.Variable(tf.zeros(shape=(n_filters)), name="b")
+        self.b = tf.Variable(tf.zeros(shape=(n_filters,)), name="b")
 
         self.n_filters = n_filters
         self.lr = lr
@@ -75,15 +75,7 @@ class RBMConv(tf.keras.layers.Layer):
             )
             sys.exit(-1)
 
-        # Save the shape
-        self.valid_shape = input_shape
 
-        self.v = tf.Variable(
-            tf.zeros(
-                shape=(1, input_shape[1], input_shape[2], input_shape[3])
-            ),
-            name="v",
-        )
         self.a = tf.Variable(0.0, name="a")
 
         # Sampling N(μ=0, σ=0.1) to initialize weights
@@ -113,31 +105,14 @@ class RBMConv(tf.keras.layers.Layer):
             inputs (tf.Tensor): Input Tensor
         """
 
-        # Loop over all samples in batch
-        for b in range(tf.shape(inputs)[0]):
-
-            # Add batch dimension because convolutions require it
-            self.v.assign(tf.expand_dims(inputs[b], axis=0))
-            self.k_gibbs_sampling()
-            self.contrastive_divergence()
+        self.batch_size = tf.shape(inputs)[0]
+        self.v_shape = tf.shape(inputs)
 
         # Return h as input for next RBM
-        return self.h
+        return self.contrastive_divergence(inputs)
 
-    def k_gibbs_sampling(self):
-        """Function to sample h₍₀₎ from v₍₀₎, v₍₁₎ from h₍₀₎ ... v₍ₖ₊₁₎ from h₍ₖ₎"""
 
-        # Save initial input (tf.identity == np.copy)
-        self.v_init = tf.identity(self.v)
-
-        for _ in range(self.k):
-            # h ~ p(h | v)
-            self.h.assign(self.h_given_v(self.v))
-
-            # v ~ p(v | h)
-            self.v.assign(self.v_given_h())
-
-    def contrastive_divergence(self):
+    def contrastive_divergence(self, v):
         """Function to approximate the gradient where we have a positive(ϕ⁺) and negative(ϕ⁻) grad.
 
         ϕ⁻ = p(h₍ₜ₎ = 1 | v₍ₜ₎) ⋅ v₍ₜ₎
@@ -146,59 +121,62 @@ class RBMConv(tf.keras.layers.Layer):
         ϕ⁺ - ϕ⁻ is the constrastive divergence which approximate the derivation of maximum log-likelihood
         """
 
+        ## Gibbs Sampling
+
+        v_init = tf.identity(v)
+
+        for _ in range(self.k):
+            # h ~ p(h | v)
+            h = self.h_given_v(v)
+
+            # v ~ p(v | h)
+            v = self.v_given_h(h)
+
+
         # h ~ p(h₍ₜ₎ = 1 | v₍ₜ₎)
-        h_bin = self.sample_binary_prob(self.h)
+        h_bin = self.sample_binary_prob(h)
 
         # h ~ p(h₍₀₎ = 1 | v₍₀₎)
-        self.h_init = self.sample_binary_prob(self.h_given_v(self.v_init))
+        h_init = self.sample_binary_prob(self.h_given_v(v_init))
 
-        # Prepare hidden tensors to be kernels to calculate W grad.
-        h_shape = tf.shape(self.h)
-        v_shape = tf.shape(self.v)
 
-        # Shape for the kernel: [filter_height, filter_width, in_channels, out_channels]
-        h_init_kernel = tf.reshape(
-            self.h_init, [h_shape[1], h_shape[2], v_shape[3], h_shape[3]]
-        )
-        h_bin_kernel = tf.reshape(
-            h_bin, [h_shape[1], h_shape[2], v_shape[3], h_shape[3]]
-        )
+        # Here we use a trick to transform h in a kernel and being able to use batch convolution
+        # v and h have the same batch size, so we put batch size as input channel. On v we put the
+        # real input channel as batch size
+        grad_w_0 = tf.nn.conv2d(tf.transpose(v_init, [3,1,2,0]), tf.transpose(h_init, [1,2,0,3]), strides=1, padding="VALID")
+        grad_w_t = tf.nn.conv2d(tf.transpose(v, [3,1,2,0]), tf.transpose(h_bin, [1,2,0,3]), strides=1, padding="VALID")
 
-        # Reshape here assure that the resultkeeps the same dims as W
-        grad_w_0 = tf.reshape(
-            tf.nn.conv2d(
-                self.v_init, h_init_kernel, strides=1, padding="VALID"
-            ),
-            tf.shape(self.W),
-        )
-        grad_w_t = tf.reshape(
-            tf.nn.conv2d(self.v, h_bin_kernel, strides=1, padding="VALID"),
-            tf.shape(self.W),
-        )
+        # In the end we have a grad shape = [input channel, height, width, output channel]
+        # Where input channel is the real one
+        grad = tf.transpose( grad_w_0 - grad_w_t, [1,2,0,3])
 
-        self.W.assign_add(self.lr * ((grad_w_0 - grad_w_t)))
+
+        # Needs to be divided by batch size because all convolutions where applied in batch size depth
+        # Not in their real depth (input channel)
+        self.W.assign_add(self.lr * ( grad/tf.cast(self.batch_size, dtype=tf.float32) ))
 
         # Because a is a single value bias for the input tensor all init values where summed then subtracted
         # with the sum of current input values
         self.a.assign_add(
             self.lr
             * (
-                tf.reduce_sum(self.v_init, axis=[0, 1, 2])
-                - tf.reduce_sum(self.v, axis=[0, 1, 2])
+                tf.reduce_sum(v_init, axis=[0, 1, 2])
+                - tf.reduce_sum(v, axis=[0, 1, 2])
             )[0]
         )
 
         # Same logic as a but here b has n_filter lines so we sum along all axes except the channel one
-        # Num. Channels of b == Num. Rows of h
         self.b.assign_add(
             self.lr
             * (
-                tf.reduce_sum(self.h_init, axis=[0, 1, 2])
+                tf.reduce_sum(h_init, axis=[0, 1, 2])
                 - tf.reduce_sum(h_bin, axis=[0, 1, 2])
             )
         )
 
-    def v_given_h(self):
+        return h_bin
+
+    def v_given_h(self, h):
         """Function that implements the conditional probability:
 
             P(v | h) = σ( (W * h) + a )
@@ -214,14 +192,14 @@ class RBMConv(tf.keras.layers.Layer):
             Tensorflow will raise an error.
 
         Returns:
-            Tensor: Binary Activations Tensor
+            Tensor: Tensor of shape [batch_size, Nv, Nv, channels]
         """
         return tf.math.sigmoid(
             self.a
             + tf.nn.conv2d_transpose(
-                self.h,
+                h,
                 self.W,
-                output_shape=[1] + self.valid_shape[1:],
+                output_shape=self.v_shape,
                 strides=1,
                 padding="VALID",
             )
@@ -237,11 +215,11 @@ class RBMConv(tf.keras.layers.Layer):
             operation.
 
         Args:
-            Tensor: Tensor of shape [tf.shape(v)[0], tf.shape(v)[0]]
+            Tensor: Tensor of shape [batch_size, Nw, Nw, n_filters]
 
         Returns:
             Tensor: Desc
-        """
+        """ 
         return tf.math.sigmoid(
             self.b
             + tf.nn.conv2d(
@@ -289,17 +267,21 @@ class RBMConv(tf.keras.layers.Layer):
 
         # Validate if image doesn't has batch dim
         try:
-            if len(tf.shape(x)) != 3:
+            if len(tf.shape(x)) != 4:
                 raise NotImplemented
         except NotImplemented as e:
             print(
-                f"[!] Wrong shape! Should be [Height, Width, Channels]. Got [{tf.shape(x)}]"
+                f"[!] Wrong shape! Should be [Batch, Height, Width, Channels]. Got [{tf.shape(x)}]"
             )
             sys.exit(-1)
 
+
+        # Needs to be updated for some calculations
+        self.v_shape = tf.shape(x)
+
         # Update reconstruction with new weights
-        self.h.assign(self.h_given_v(tf.expand_dims(x, axis=0)))
-        self.v.assign(self.v_given_h())
+        h = self.h_given_v(x)
+        v = self.v_given_h(h)
 
         # Return reconstructed input reshape to the original shape
-        return self.v
+        return v

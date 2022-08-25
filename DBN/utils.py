@@ -4,7 +4,7 @@ import sys
 from inspect import signature, _empty
 
 """
-	Helper functions/classes for Discrete RBM
+	Helper functions/classes for RBMs
 
 """
 
