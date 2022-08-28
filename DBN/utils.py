@@ -8,11 +8,22 @@ from inspect import signature, _empty
 
 """
 
-def show_batch_images(batch, unorm_fn, num_imgs=5):
-	for img in batch[:num_imgs]:
-		i = unorm_fn(img).numpy()
+def show_batch_images(batch, pred, unorm_fn, num_imgs=5):
+	""" Function to show original and reconstructed images side by side
+		given a batch of images.
+	
+	Args:
+	    batch (Tensor): Tensor with a batch of original images
+	    pred (Tensor): Tensor with a batch of reconstructed images
+	    unorm_fn (function): Function to unormalize images from [0,1] -> [0,255]
+	    num_imgs (int, optional): Number of images to show from batch
+	"""
+	for img, img_pred in zip(batch[:num_imgs], pred[:num_imgs]):
+		i, i_pred = unorm_fn(img).numpy(), unorm_fn(img_pred).numpy()
 
-		plt.imshow(i, cmap="gray", interpolation="nearest")
+		fig, (ax0, ax1) = plt.subplots(1,2)
+		ax0.imshow(i, cmap="gray", interpolation="nearest")
+		ax1.imshow(i_pred, cmap="gray", interpolation="nearest")
 		plt.show()
 
 

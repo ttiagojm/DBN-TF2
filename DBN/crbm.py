@@ -47,10 +47,9 @@ class RBMConv(tf.keras.layers.Layer):
         super(RBMConv, self).__init__()
 
         self.h = tf.Variable(
-            tf.zeros(shape=(hidden_units, hidden_units, n_filters)),
-            name="h",
+            tf.zeros(shape=(hidden_units, hidden_units, n_filters))
         )
-        self.b = tf.Variable(tf.zeros(shape=(n_filters,)), name="b")
+        self.b = tf.Variable(tf.zeros(shape=(n_filters,)))
 
         self.n_filters = n_filters
         self.lr = lr
@@ -76,7 +75,7 @@ class RBMConv(tf.keras.layers.Layer):
             sys.exit(-1)
 
 
-        self.a = tf.Variable(0.0, name="a")
+        self.a = tf.Variable(0.0)
 
         # Sampling N(μ=0, σ=0.1) to initialize weights
         # Don't Forget W shape: Nᵥ-Nₕ+1 x Nᵥ-Nₕ+1 x K
@@ -91,16 +90,13 @@ class RBMConv(tf.keras.layers.Layer):
                     self.n_filters,
                 ),
                 stddev=0.1,
-            ),
-            name="W",
+            )
         )
 
-    def call(self, inputs):
+    def call(self, inputs, train=True):
         """Receive input and transform it
 
                 This is the place where we call other functions to calculate conditionals and reconstruct input
-
-                ❗NOTE: Batch images are being processed individually to help with some logics
         Args:
             inputs (tf.Tensor): Input Tensor
         """
@@ -109,7 +105,10 @@ class RBMConv(tf.keras.layers.Layer):
         self.v_shape = tf.shape(inputs)
 
         # Return h as input for next RBM
-        return self.contrastive_divergence(inputs)
+        if train:
+            return self.contrastive_divergence(inputs)
+
+        return self.h_given_v(inputs)
 
 
     def contrastive_divergence(self, v):
@@ -157,22 +156,10 @@ class RBMConv(tf.keras.layers.Layer):
 
         # Because a is a single value bias for the input tensor all init values where summed then subtracted
         # with the sum of current input values
-        self.a.assign_add(
-            self.lr
-            * (
-                tf.reduce_sum(v_init, axis=[0, 1, 2])
-                - tf.reduce_sum(v, axis=[0, 1, 2])
-            )[0]
-        )
+        self.a.assign_add(self.lr * (tf.reduce_mean(v_init - v, axis=[0, 1, 2]))[0])
 
         # Same logic as a but here b has n_filter lines so we sum along all axes except the channel one
-        self.b.assign_add(
-            self.lr
-            * (
-                tf.reduce_sum(h_init, axis=[0, 1, 2])
-                - tf.reduce_sum(h_bin, axis=[0, 1, 2])
-            )
-        )
+        self.b.assign_add(self.lr * (tf.reduce_mean(h_init - h_bin, axis=[0, 1, 2])))
 
         return h_bin
 
@@ -255,7 +242,7 @@ class RBMConv(tf.keras.layers.Layer):
         ## If sigmoid prob. is less then 0.5 is 0 then is 1, but it's more efficient the function below
         return tf.nn.relu(tf.sign(probs - tf.random.uniform(tf.shape(probs))))
 
-    def get_output(self, x):
+    def get_reconstruction(self, x):
         """Function to return the reconstruction of x based on W, a and b learned previously
 
         Args:
@@ -279,7 +266,6 @@ class RBMConv(tf.keras.layers.Layer):
         # Needs to be updated for some calculations
         self.v_shape = tf.shape(x)
 
-        # Update reconstruction with new weights
         h = self.h_given_v(x)
         v = self.v_given_h(h)
 
