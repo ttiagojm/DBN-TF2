@@ -14,7 +14,7 @@ class DBN(tf.keras.layers.Layer):
 
 		RBMs are trained separately.
 	"""
-	def __init__(self, rbm_type:str, rbm_num:int, decrease_val: int, rbm_params:dict):
+	def __init__(self, rbms: list):
 		"""
 		Args:
 		    rbm_type (str): Type of RBM (CRBM or RBM)
@@ -24,21 +24,13 @@ class DBN(tf.keras.layers.Layer):
 		"""
 		super(DBN, self).__init__()
 
-		# RBMBernoulli is the name of RBM class
-		class_rbm = RBMBernoulli if rbm_type == "RBMBernoulli" else RBMConv
-
-		# Verify and filter passed arguments
-		rbm_params = verify_args(class_rbm, rbm_params)
-
-		# Generate all RBMs, always decreasing the size of hidden layer
-		self.rbms = list()
-
-		for i, _ in enumerate(range(rbm_num)):
-			if i > 0: rbm_params["hidden_units"] -= decrease_val
-			self.rbms.append(class_rbm(**rbm_params))
+		if not rbms:
+			self.rbms = list()
+		else:
+			self.rbms = rbms
 
 
-	def call(self, inputs):
+	def call(self, inputs, training=False):
 		""" Function to train DBN
 		
 		Args:
@@ -48,6 +40,7 @@ class DBN(tf.keras.layers.Layer):
 		    Tensor: Latent/Hidden layer Tensor
 		"""
 		for rbm in self.rbms:
+			rbm.training = training
 			inputs = rbm(inputs)
 
 		return inputs
@@ -64,10 +57,23 @@ class DBN(tf.keras.layers.Layer):
 
 		## Feed forward with Gibbs Sampling
 		for rbm in self.rbms:
-			x = rbm(x, train=False)
+			rbm.training = False
+			x = rbm(x)
 		
 		# Here x will be h, because the reconstruction of all RBMs (except first) is the h of the previous RBM
 		for rbm in reversed(self.rbms):
 			x = rbm.v_given_h(x)
 		
 		return x
+
+	def fit(self, inputs, epochs=1):
+		for epoch in range(epochs):
+			print(f"#### Epoch {epoch+1} ####")
+			for i, batch in enumerate(inputs):
+				print(f"{i+1} batch")
+				self.call(batch[0], training=True)
+
+
+		# After training, freeze the model
+		for rbm in self.rbms:
+			rbm.training = False

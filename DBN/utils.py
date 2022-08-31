@@ -1,25 +1,54 @@
 import tensorflow as tf
+import tensorflow_datasets as tfds
 import matplotlib.pyplot as plt
 import sys
 from inspect import signature, _empty
 
+
+# Transform ℤ: [0,255] -> ℝ: [0,1]
+normalizer = tf.keras.layers.Rescaling(1.0 / 255)
+
+# Transform ℝ: [0,1] -> ℤ: [0,255]
+unormalizer = lambda x: tf.cast(tf.keras.layers.Rescaling(255)(x), tf.int32)
+
+
+def get_datasets(dataset_name: str, normalize=True):
+	(img_train, img_val, img_test), ds_info = tfds.load(
+	    dataset_name,
+	    split=["train[:80%]", "train[80%:]", "test"],
+	    as_supervised=True,
+	    with_info=True,
+	)
+
+	if normalize:
+		norm_train = img_train.map(lambda x, y: (normalizer(x), y)).cache().shuffle(tf.data.experimental.cardinality(img_train)).batch(32).prefetch(tf.data.AUTOTUNE)
+		norm_val = img_val.map(lambda x, y: (normalizer(x), y)).cache().shuffle(tf.data.experimental.cardinality(img_val)).batch(32).prefetch(tf.data.AUTOTUNE)
+		norm_test = img_test.map(lambda x, y: (normalizer(x), y)).cache().shuffle(tf.data.experimental.cardinality(img_test)).batch(32).prefetch(tf.data.AUTOTUNE)
+		
+		return norm_train, norm_val, norm_test, ds_info
+
+	return img_train, img_val, img_test, ds_info
+
 """
-	Helper functions/classes for RBMs
+	Helper functions/classes for RBMs 
 
 """
 
-def show_batch_images(batch, pred, unorm_fn, num_imgs=5):
+def show_batch_images(batch, pred, num_imgs=5, unormalize=True):
 	""" Function to show original and reconstructed images side by side
 		given a batch of images.
 	
 	Args:
 	    batch (Tensor): Tensor with a batch of original images
 	    pred (Tensor): Tensor with a batch of reconstructed images
-	    unorm_fn (function): Function to unormalize images from [0,1] -> [0,255]
 	    num_imgs (int, optional): Number of images to show from batch
 	"""
 	for img, img_pred in zip(batch[:num_imgs], pred[:num_imgs]):
-		i, i_pred = unorm_fn(img).numpy(), unorm_fn(img_pred).numpy()
+
+		if unormalize:
+			i, i_pred = unormalizer(img).numpy(), unormalizer(img_pred).numpy()
+		else:
+			i, i_pred = img.numpy(), img_pred.numpy()
 
 		fig, (ax0, ax1) = plt.subplots(1,2)
 		ax0.imshow(i, cmap="gray", interpolation="nearest")

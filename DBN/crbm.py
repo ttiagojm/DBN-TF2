@@ -36,7 +36,7 @@ class RBMConv(tf.keras.layers.Layer):
     References: (Lee, Grosse, Ranganath, Ng, 2009)
     """
 
-    def __init__(self, hidden_units: int, n_filters: int, k=1, lr=0.01):
+    def __init__(self, hidden_units: int, n_filters: int, training=True, k=1, lr=0.01):
         """
         Args:
             hidden_units (int): Number of hidden units (latent variables)
@@ -47,13 +47,15 @@ class RBMConv(tf.keras.layers.Layer):
         super(RBMConv, self).__init__()
 
         self.h = tf.Variable(
-            tf.zeros(shape=(hidden_units, hidden_units, n_filters))
+            tf.zeros(shape=(hidden_units, hidden_units, n_filters)), trainable=False
         )
-        self.b = tf.Variable(tf.zeros(shape=(n_filters,)))
+        self.b = tf.Variable(tf.zeros(shape=(n_filters,)), trainable=False)
 
         self.n_filters = n_filters
         self.lr = lr
         self.k = k
+
+        self.training = training
 
     def build(self, input_shape):
         """Receive the shape of the input
@@ -75,7 +77,7 @@ class RBMConv(tf.keras.layers.Layer):
             sys.exit(-1)
 
 
-        self.a = tf.Variable(0.0)
+        self.a = tf.Variable(0.0, trainable=False)
 
         # Sampling N(μ=0, σ=0.1) to initialize weights
         # Don't Forget W shape: Nᵥ-Nₕ+1 x Nᵥ-Nₕ+1 x K
@@ -89,11 +91,12 @@ class RBMConv(tf.keras.layers.Layer):
                     input_shape[3],
                     self.n_filters,
                 ),
-                stddev=0.1,
-            )
+                stddev=.3,
+            ), 
+            trainable=False
         )
 
-    def call(self, inputs, train=True):
+    def call(self, inputs):
         """Receive input and transform it
 
                 This is the place where we call other functions to calculate conditionals and reconstruct input
@@ -105,7 +108,7 @@ class RBMConv(tf.keras.layers.Layer):
         self.v_shape = tf.shape(inputs)
 
         # Return h as input for next RBM
-        if train:
+        if self.training:
             return self.contrastive_divergence(inputs)
 
         return self.h_given_v(inputs)

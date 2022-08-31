@@ -29,7 +29,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
                             (Fischer, Asja and Igel, Christian, 2012)
     """
 
-    def __init__(self, hidden_units: int, k=1, lr=0.01):
+    def __init__(self, hidden_units: int, training=True, k=1, lr=0.01):
         """
         Args:
             hidden_units (int): Number of hidden units (latent variables)
@@ -42,6 +42,8 @@ class RBMBernoulli(tf.keras.layers.Layer):
         self.k = k
         self.lr = lr
 
+        self.training = training
+
     def build(self, input_shape):
         """Receive the shape of the input
 
@@ -51,24 +53,23 @@ class RBMBernoulli(tf.keras.layers.Layer):
             input_shape (tuple[int]): Input shape
         """
 
-        # ❗ TODO: Validate if inputs is 4-rank or 2-rank (doesn't need flat_shape neither original shape)
         # input_shape = NHWC = (Batch, Height, Weight, Channels)
         self.flat_shape = input_shape[1] * input_shape[2] * input_shape[3]
 
-        # Save the original shape to reshape input in __call__
+        # Save the original shape to reshape input
         self.width, self.height, self.channels = (
             input_shape[2],
             input_shape[1],
             input_shape[3],
         )
 
-        self.b = tf.Variable(tf.zeros(shape=(self.hidden_units,)), name="b")
-        self.a = tf.Variable(tf.zeros(shape=(self.flat_shape,)), name="a")
+        self.b = tf.Variable(tf.zeros(shape=(self.hidden_units,)), name="b", trainable=False)
+        self.a = tf.Variable(tf.zeros(shape=(self.flat_shape,)), name="a", trainable=False)
         
         # Sampling N(μ=0, σ=0.1) to initialize weights
-        self.W = tf.Variable(tf.random.normal(shape=(self.flat_shape, self.hidden_units), stddev=0.1),name="W")
+        self.W = tf.Variable(tf.random.normal(shape=(self.flat_shape, self.hidden_units), stddev=.3),name="W", trainable=False)
 
-    def call(self, inputs, trainable=False):
+    def call(self, inputs, training=True):
         """Receive input and transform it
 
                 This is the place where we call other functions to calculate conditionals probs. and reconstruct input
@@ -76,11 +77,14 @@ class RBMBernoulli(tf.keras.layers.Layer):
             inputs (tf.Tensor): Input Tensor
         """
 
-        # ❗ TODO: Validate if inputs is 4-rank or 2-rank (doesn't need flat reshape)
+
         inputs = tf.reshape(inputs, [-1, self.flat_shape])
 
         # Return the input for next RBM
-        return self.contrastive_divergence(inputs)
+        if self.training:
+            return self.contrastive_divergence(inputs)
+
+        return self.h_given_v(inputs)
 
     def contrastive_divergence(self, v):
         """Function to approximate the gradient where we have a positive(ϕ⁺) and negative(ϕ⁻) grad.
@@ -179,7 +183,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
         ## If sigmoid prob. is less then 0.5 is 0 then is 1, but it's more efficient the function below
         return tf.nn.relu(tf.sign(probs - tf.random.uniform(tf.shape(probs))))
 
-    def get_output(self, x):
+    def get_reconstruction(self, x):
         """Function to return the reconstruction of x based on W, a and b learned previously
 
         Args:
