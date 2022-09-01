@@ -3,6 +3,7 @@ from rbm import RBMBernoulli
 from utils import verify_args
 import tensorflow as tf
 from utils import show_batch_images
+from tqdm import tqdm
 
 
 class DBN(tf.keras.layers.Layer):
@@ -30,7 +31,7 @@ class DBN(tf.keras.layers.Layer):
 			self.rbms = rbms
 
 
-	def call(self, inputs, training=False):
+	def call(self, inputs, fit=False):
 		""" Function to train DBN
 		
 		Args:
@@ -40,7 +41,7 @@ class DBN(tf.keras.layers.Layer):
 		    Tensor: Latent/Hidden layer Tensor
 		"""
 		for rbm in self.rbms:
-			rbm.training = training
+			rbm.training = fit
 			inputs = rbm(inputs)
 
 		return inputs
@@ -66,12 +67,11 @@ class DBN(tf.keras.layers.Layer):
 		
 		return x
 
-	def fit(self, inputs, epochs=1):
+	def fit(self, inputs, epochs=1, verbose=False):
 		for epoch in range(epochs):
 			print(f"#### Epoch {epoch+1} ####")
-			for i, batch in enumerate(inputs):
-				print(f"{i+1} batch")
-				self.call(batch[0], training=True)
+			for i, batch in tqdm(enumerate(inputs)):
+				self.call(batch[0], fit=True)
 
 
 		# After training, freeze the model
