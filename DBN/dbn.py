@@ -36,6 +36,7 @@ class DBN(tf.keras.layers.Layer):
 		
 		Args:
 		    inputs (Tensor): Input Tensor
+		    fit (bool, optional): Determine if it is suposed to train or infer each RBM
 		
 		Returns:
 		    Tensor: Latent/Hidden layer Tensor
@@ -68,11 +69,17 @@ class DBN(tf.keras.layers.Layer):
 		return x
 
 	def fit(self, inputs, epochs=1, verbose=False):
+		""" Function to fit and freeze the model
+		
+		Args:
+		    inputs (Tensor): Input Tensor
+		    epochs (int, optional): Number of epochs to be trained
+		    verbose (bool, optional): Determine if messages are shown or not (for now it's useless)
+		"""
 		for epoch in range(epochs):
 			print(f"#### Epoch {epoch+1} ####")
 			for i, batch in tqdm(enumerate(inputs)):
 				self.call(batch[0], fit=True)
-
 
 		# After training, freeze the model
 		for rbm in self.rbms:

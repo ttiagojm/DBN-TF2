@@ -13,6 +13,15 @@ unormalizer = lambda x: tf.cast(tf.keras.layers.Rescaling(255)(x), tf.int32)
 
 
 def get_datasets(dataset_name: str, normalize=True):
+	""" Function get a dataset and prepare it to be used to efficiently on training pipeline
+	
+	Args:
+	    dataset_name (str): Name of the dataset of tensorflow_datasets
+	    normalize (bool, optional): Determine if the dataset should or shouldn't be normalized
+	
+	Returns:
+	    tuple: Tuple of processed train, validation and test data tensors
+	"""
 	(img_train, img_val, img_test), ds_info = tfds.load(
 	    dataset_name,
 	    split=["train[:80%]", "train[80%:]", "test"],
@@ -28,6 +37,31 @@ def get_datasets(dataset_name: str, normalize=True):
 		return norm_train, norm_val, norm_test, ds_info
 
 	return img_train, img_val, img_test, ds_info
+
+def get_pretrain_images(autoencoder, dataset_name: str):
+	""" Function get a dataset and encoded it using an autoencoder
+
+		Dataset will be always normalized!
+	
+	Args:
+	    autoencoder (Model): Autoencoder model
+	    dataset_name (str): Name of the dataset of tensorflow_datasets
+	
+	Returns:
+	    tuple: Tuple of processed train, validation and test data tensors
+	"""
+	(img_train, img_val, img_test), ds_info = tfds.load(
+        dataset_name,
+        split=["train[:80%]", "train[80%:]", "test"],
+        as_supervised=True,
+        with_info=True,
+    )
+
+	r_img_train = img_train.cache().shuffle(tf.data.experimental.cardinality(img_train)).batch(32).map(lambda x, y: (autoencoder(normalizer(x)), y)).prefetch(tf.data.AUTOTUNE)
+	r_img_val = img_val.cache().shuffle(tf.data.experimental.cardinality(img_train)).batch(32).map(lambda x, y: (autoencoder(normalizer(x)), y)).prefetch(tf.data.AUTOTUNE)
+	r_img_test = img_test.cache().shuffle(tf.data.experimental.cardinality(img_train)).batch(32).map(lambda x, y: (autoencoder(normalizer(x)), y)).prefetch(tf.data.AUTOTUNE)
+
+	return r_img_train, r_img_val, r_img_test
 
 """
 	Helper functions/classes for RBMs 
@@ -51,8 +85,8 @@ def show_batch_images(batch, pred, num_imgs=5, unormalize=True):
 			i, i_pred = img.numpy(), img_pred.numpy()
 
 		fig, (ax0, ax1) = plt.subplots(1,2)
-		ax0.imshow(i, cmap="gray", interpolation="nearest")
-		ax1.imshow(i_pred, cmap="gray", interpolation="nearest")
+		ax0.imshow(i, interpolation="nearest")
+		ax1.imshow(i_pred, interpolation="nearest")
 		plt.show()
 
 
@@ -63,39 +97,26 @@ def show_batch_images(batch, pred, num_imgs=5, unormalize=True):
 # Just a custom except for verify_args function
 class RequiredParamError(Exception): pass
 
-def verify_args(class_rbm, args:dict) -> dict:
-	""" Function to verify and filter arguments passed for a certain class
+def get_shallow_net(in_size: tuple[int]):
+	""" Function to create and compile a shallow convnet for training
 	
 	Args:
-	    class_rbm (class): Class to check if passed arguments are valid
-	    args (dict): Passed arguments
+	    in_size (tuple[int]): Input size
 	
 	Returns:
-	    dict: New dictionary with all valid arguments
-	
-	Raises:
-	    RequiredParamError: Raised when a required parameter is missing
+	    Model: Prepared Sequential Model
 	"""
+	shallow = tf.keras.Sequential([
+	    tf.keras.Input(shape=in_size),
+	    tf.keras.layers.Conv2D(32, (3,3), activation="relu", padding="same"),
+	    tf.keras.layers.MaxPooling2D(),
+	    tf.keras.layers.Conv2D(64, (3,3), activation="relu", padding="same"),
+	    tf.keras.layers.MaxPooling2D(),
+	    tf.keras.layers.GlobalAveragePooling2D(),
+	    tf.keras.layers.Flatten(),
+	    tf.keras.layers.Dense(10)
+	])
 
-	# Get all parameters and split between default and required
-	req_args_rbm, def_args_rbm = set(), set()
-	
-	for param in signature(class_rbm).parameters.values():
-		if param.default == _empty: req_args_rbm.add(param.name)
-		else: def_args_rbm.add(param.name)
-	
-	# Get all arguments passed by us
-	args_keys = set(args.keys())
+	shallow.compile(optimizer=tf.keras.optimizers.SGD(), loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True), metrics=["accuracy"])
 
-	# If resulting set isn't empty then we don't passed all required params
-	try:
-		remain_args = req_args_rbm-args_keys
-		if len(remain_args) != 0:
-			raise RequiredParamError
-
-	except RequiredParamError as e:
-		print("[!] You forgot to pass: ", remain_args)
-		sys.exit(-1)
-
-	# Filter any wrong parameter
-	return {k:args[k] for k in args_keys.intersection(req_args_rbm.union(def_args_rbm))}
+	return shallow

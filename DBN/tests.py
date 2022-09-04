@@ -5,29 +5,28 @@ from crbm import RBMConv
 from dbn import DBN
 from utils import show_batch_images, get_datasets
 
+# Get datatset
 img_train, _ , img_test, ds_info = get_datasets("fashion_mnist")
 
+# Input size of original data
 in_size = ds_info.features["image"].shape
 
+# Kernel size for each RBM
+k_size = 5
 
-# Be careful with this value.
-# It will be used sequentially in each RBM, e.g knowing that in_size[0] = 28 and dec_val = 6:
-# RBM 1 -> hidden_units = in_size[0] - dec_val = 22
-# RBM 2 -> RBM_1_hidden_units - dec_val = 16
-# We can conclude that dec_val < in_size[0] // 2, in case that we have only 2 RBMs
-dec_val = 4
+# Get valid sizes for hidden layer of each RBM (based on kernel size)
+get_hidden_size = lambda input_size, k_size: input_size - k_size + 1
+first_hidden_size = get_hidden_size(in_size[0], k_size)
+
 
 dbn = DBN([
-            RBMConv(in_size[0] - dec_val, 8, lr=.1),
-            RBMConv(in_size[0] - dec_val*2, 8, lr=.1)
+            RBMConv(first_hidden_size, 10, lr=5e-4),
+            RBMConv(get_hidden_size(first_hidden_size, k_size), 13, lr=1e-5)
         ])
 
-dbn.fit(img_train)
+dbn.fit(img_train, epochs=2)
 
 # Show images and their reconstructions
 batch = next(iter(img_test))
-
 x = dbn.get_reconstruction(batch[0])
-
-# Show the first 5 images
 show_batch_images(batch[0], x)

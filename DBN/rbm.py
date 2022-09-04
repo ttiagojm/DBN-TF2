@@ -102,30 +102,30 @@ class RBMBernoulli(tf.keras.layers.Layer):
         ## Gibbs Sampling
         for _ in range(self.k):
             # h ~ p(h | v)
-            h = self.h_given_v(v)
+            h = self.sample_binary_prob(self.h_given_v(v))
 
             # v ~ p(v | h)
             #self.v.assign(self.v_given_h(h))
             v = self.v_given_h(h)
 
 
-        # h ~ p(h₍ₜ₎ = 1 | v₍ₜ₎)
-        h_bin = self.sample_binary_prob(h)
+        # p(h₍ₜ₎ = 1 | v₍ₜ₎)
+        h = self.h_given_v(v)
 
-        # h ~ p(h₍₀₎ = 1 | v₍₀₎)
-        h_init = self.sample_binary_prob(self.h_given_v(v_init))
+        # p(h₍₀₎ = 1 | v₍₀₎)
+        h_init = self.h_given_v(v_init)
 
         ## Constrastive Divergence
 
         # Tensordot allow to do matmul fixed in axes, in this case, fixed in batch axis
-        mul_init_curr = tf.tensordot(v_init, h_init, axes=[0, 0]) - tf.tensordot(v, h_bin, axes=[0, 0])
+        mul_init_curr = tf.tensordot(v_init, h_init, axes=[0, 0]) - tf.tensordot(v, h, axes=[0, 0])
         self.W.assign_add( self.lr * mul_init_curr)
         
         # Average each value along batch axis
         self.a.assign_add(self.lr * tf.reduce_mean(v_init - v, axis=0))
-        self.b.assign_add(self.lr * tf.reduce_mean(h_init - h_bin, axis=0))
+        self.b.assign_add(self.lr * tf.reduce_mean(h_init - h, axis=0))
         
-        return h_bin
+        return h
 
     def v_given_h(self, h):
         """Function that implements the conditional probability:

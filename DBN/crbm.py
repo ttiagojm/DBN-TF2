@@ -1,6 +1,9 @@
 import tensorflow as tf
+import tensorflow_probability as tfp
 import sys
 
+# Alias to access distributions module
+tfd = tfp.distributions
 
 class RBMConv(tf.keras.layers.Layer):
     """Class that represents a Convolutional Restricted Boltzman Machine
@@ -25,24 +28,27 @@ class RBMConv(tf.keras.layers.Layer):
     Gibbs Sampling does the job and Contrastive Divergence will be used to approximate gradients.
 
     P(h=1 | v) = σ( (Wᵏ * v) + bₖ)
-    P(v=1 | k) = σ( (∑ᴷ Wᵏ * h) + a )
+    P(v=1 | h) = σ( (∑ᴷ Wᵏ * h) + a )
+
+    The conditional above are using binary visible units (v), in case of real-valued visible units:
+    P(h=1 | v) = N(((Wᵏ * v) + bₖ), sigma²), where N is a Multivariate Gaussian dist.
+    P(v=1 | h) = sigmoid( ((∑ᴷ Wᵏ * h) + a)/sigma² )
 
     A more complete version has a Max Pooling Layer too (it's not implemented, yet)
 
-    We'll see some Tensors with axis=0 having a shape of 1, that's because Convolution operation require
-    an input Tensor with 4 or more dims.
-
-
     References: (Lee, Grosse, Ranganath, Ng, 2009)
+                (Lee, Honglak and Ekanadham, Chaitanya and Ng, Andrew, 2007)
     """
 
-    def __init__(self, hidden_units: int, n_filters: int, training=True, k=1, lr=0.01):
+    def __init__(self, hidden_units: int, n_filters: int, rbm_type="binary", training=True, k=1, lr=1e-3):
         """
         Args:
             hidden_units (int): Number of hidden units (latent variables)
             n_filters (int): Number of filters (latent groups)
-            k (int): Number of Gibbs Samplings
-            lr (float): Learning rate
+            rbm_type(str, optional): Distinguish between binary and real valued visible units
+            training(bool, optional): Boolean to know if RBM is able to train or just infer
+            k (int, optional): Number of Gibbs Samplings
+            lr (float, optional): Learning rate
         """
         super(RBMConv, self).__init__()
 
@@ -54,8 +60,10 @@ class RBMConv(tf.keras.layers.Layer):
         self.n_filters = n_filters
         self.lr = lr
         self.k = k
-
+        self.sigma = .2
         self.training = training
+        self.v_activation = tf.math.sigmoid if rbm_type == "binary" else self.sample_gaussian_prob
+
 
     def build(self, input_shape):
         """Receive the shape of the input
@@ -77,9 +85,9 @@ class RBMConv(tf.keras.layers.Layer):
             sys.exit(-1)
 
 
-        self.a = tf.Variable(0.0, trainable=False)
+        self.a = tf.Variable(0.01, trainable=False)
 
-        # Sampling N(μ=0, σ=0.1) to initialize weights
+        # Sampling N(μ=0, σ=.01) to initialize weights
         # Don't Forget W shape: Nᵥ-Nₕ+1 x Nᵥ-Nₕ+1 x K
         # Based on Tensorflow Docs kernel should follow this shape:
         # [filter_height, filter_width, in_channels, out_channels]
@@ -91,8 +99,8 @@ class RBMConv(tf.keras.layers.Layer):
                     input_shape[3],
                     self.n_filters,
                 ),
-                stddev=.3,
-            ), 
+                stddev=0.01
+            ),
             trainable=False
         )
 
@@ -111,7 +119,7 @@ class RBMConv(tf.keras.layers.Layer):
         if self.training:
             return self.contrastive_divergence(inputs)
 
-        return self.h_given_v(inputs)
+        return self.sample_binary_prob(self.h_given_v(inputs))
 
 
     def contrastive_divergence(self, v):
@@ -123,35 +131,33 @@ class RBMConv(tf.keras.layers.Layer):
         ϕ⁺ - ϕ⁻ is the constrastive divergence which approximate the derivation of maximum log-likelihood
         """
 
-        ## Gibbs Sampling
-
+        # Save original image
         v_init = tf.identity(v)
 
+        ## Gibbs Sampling
         for _ in range(self.k):
-            # h ~ p(h | v)
-            h = self.h_given_v(v)
+            #h ~ p(h | v), we are sampling a binary variable from a Bernoulli dist.
+            h = self.sample_binary_prob(self.h_given_v(v))
 
             # v ~ p(v | h)
             v = self.v_given_h(h)
 
 
-        # h ~ p(h₍ₜ₎ = 1 | v₍ₜ₎)
-        h_bin = self.sample_binary_prob(h)
+        # p(h₍₀₎ = 1 | v₍₀₎, not sampling just calculating probs.
+        h_init = self.h_given_v(v_init)
 
-        # h ~ p(h₍₀₎ = 1 | v₍₀₎)
-        h_init = self.sample_binary_prob(self.h_given_v(v_init))
-
+        # p(h₍ₜ₎ = 1 | v₍ₜ₎)
+        h = self.h_given_v(v)
 
         # Here we use a trick to transform h in a kernel and being able to use batch convolution
         # v and h have the same batch size, so we put batch size as input channel. On v we put the
         # real input channel as batch size
         grad_w_0 = tf.nn.conv2d(tf.transpose(v_init, [3,1,2,0]), tf.transpose(h_init, [1,2,0,3]), strides=1, padding="VALID")
-        grad_w_t = tf.nn.conv2d(tf.transpose(v, [3,1,2,0]), tf.transpose(h_bin, [1,2,0,3]), strides=1, padding="VALID")
+        grad_w_t = tf.nn.conv2d(tf.transpose(v, [3,1,2,0]), tf.transpose(h, [1,2,0,3]), strides=1, padding="VALID")
 
         # In the end we have a grad shape = [input channel, height, width, output channel]
         # Where input channel is the real one
         grad = tf.transpose( grad_w_0 - grad_w_t, [1,2,0,3])
-
 
         # Needs to be divided by batch size because all convolutions where applied in batch size depth
         # Not in their real depth (input channel)
@@ -162,9 +168,9 @@ class RBMConv(tf.keras.layers.Layer):
         self.a.assign_add(self.lr * (tf.reduce_mean(v_init - v, axis=[0, 1, 2]))[0])
 
         # Same logic as a but here b has n_filter lines so we sum along all axes except the channel one
-        self.b.assign_add(self.lr * (tf.reduce_mean(h_init - h_bin, axis=[0, 1, 2])))
+        self.b.assign_add(self.lr * (tf.reduce_mean(h_init - h, axis=[0, 1, 2])))
 
-        return h_bin
+        return self.sample_binary_prob(self.h_given_v(v_init))
 
     def v_given_h(self, h):
         """Function that implements the conditional probability:
@@ -181,18 +187,22 @@ class RBMConv(tf.keras.layers.Layer):
             Strides and Padding must be the same as in the Convolution. If Output shape is wrongly calculated by us,
             Tensorflow will raise an error.
 
+            v_activation is our σ function and it's needed since CRBM can be real or binary valued. In case of real-valued, sigmoid
+            is replaced by a Gaussian distribution with mean equal to the result of the convolution and the variance
+            will be sigma²
+
         Returns:
             Tensor: Tensor of shape [batch_size, Nv, Nv, channels]
         """
-        return tf.math.sigmoid(
-            self.a
+        return self.v_activation(
+            (self.a
             + tf.nn.conv2d_transpose(
                 h,
                 self.W,
                 output_shape=self.v_shape,
                 strides=1,
                 padding="VALID",
-            )
+            ))
         )
 
     def h_given_v(self, v):
@@ -204,6 +214,8 @@ class RBMConv(tf.keras.layers.Layer):
             W should be reversed in x and y axis because in v_given_h we use it normally and this is the oposite
             operation.
 
+            If our CRBM is real-valued, it's needed to divide the result by sigma²
+
         Args:
             Tensor: Tensor of shape [batch_size, Nw, Nw, n_filters]
 
@@ -211,14 +223,35 @@ class RBMConv(tf.keras.layers.Layer):
             Tensor: Desc
         """ 
         return tf.math.sigmoid(
-            self.b
+            (self.b
             + tf.nn.conv2d(
                 v, tf.reverse(self.W, axis=[0, 1]), strides=1, padding="VALID"
-            )
+            ))/(tf.square(self.sigma) if self.v_activation == self.sample_gaussian_prob else 1.)
         )
 
+    def sample_gaussian_prob(self, mean):
+        """ Function to create and sample from a Multivariate Gaussian distribution
+
+            Mean (loc) is the relation bewteen H and V given by the deconvolution
+            Standard Deviation (scale_diag) is the sigma²
+        
+        Args:
+            mean (Tensor): Result of a deconvolution and used as mean to the distribution
+        
+        Returns:
+            Tensor: New Tensor with all new samples
+        """
+        dist = tfd.MultivariateNormalDiag(loc=mean, scale_diag=tf.fill(tf.shape(mean), tf.square(self.sigma)))
+        
+        gauss = dist.sample()
+
+        #print(tf.reduce_min(gauss), tf.reduce_max(gauss))
+
+        return gauss
+
+
     def sample_binary_prob(self, probs):
-        """Function that transform probabilities [0,1] into a binary Tensor ( set of {0,1} )
+        """Function that samples from a Bernoulli distribution
 
             Here we calculate the probability of a certain element of the probs Tensor being selected
             (Uniform Dist. sampling)
@@ -269,7 +302,7 @@ class RBMConv(tf.keras.layers.Layer):
         # Needs to be updated for some calculations
         self.v_shape = tf.shape(x)
 
-        h = self.h_given_v(x)
+        h = self.sample_binary_prob(self.h_given_v(x))
         v = self.v_given_h(h)
 
         # Return reconstructed input reshape to the original shape
