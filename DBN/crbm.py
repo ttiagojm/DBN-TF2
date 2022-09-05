@@ -5,6 +5,7 @@ import sys
 # Alias to access distributions module
 tfd = tfp.distributions
 
+
 class RBMConv(tf.keras.layers.Layer):
     """Class that represents a Convolutional Restricted Boltzman Machine
 
@@ -40,7 +41,15 @@ class RBMConv(tf.keras.layers.Layer):
                 (Lee, Honglak and Ekanadham, Chaitanya and Ng, Andrew, 2007)
     """
 
-    def __init__(self, hidden_units: int, n_filters: int, rbm_type="binary", training=True, k=1, lr=1e-3):
+    def __init__(
+        self,
+        hidden_units: int,
+        n_filters: int,
+        rbm_type="binary",
+        training=True,
+        k=1,
+        lr=1e-3,
+    ):
         """
         Args:
             hidden_units (int): Number of hidden units (latent variables)
@@ -53,17 +62,21 @@ class RBMConv(tf.keras.layers.Layer):
         super(RBMConv, self).__init__()
 
         self.h = tf.Variable(
-            tf.zeros(shape=(hidden_units, hidden_units, n_filters)), trainable=False
+            tf.zeros(shape=(hidden_units, hidden_units, n_filters)),
+            trainable=False,
         )
         self.b = tf.Variable(tf.zeros(shape=(n_filters,)), trainable=False)
 
         self.n_filters = n_filters
         self.lr = lr
         self.k = k
-        self.sigma = .2
+        self.sigma = 0.1
         self.training = training
-        self.v_activation = tf.math.sigmoid if rbm_type == "binary" else self.sample_gaussian_prob
-
+        self.v_activation = (
+            tf.math.sigmoid
+            if rbm_type == "binary"
+            else self.sample_gaussian_prob
+        )
 
     def build(self, input_shape):
         """Receive the shape of the input
@@ -84,7 +97,6 @@ class RBMConv(tf.keras.layers.Layer):
             )
             sys.exit(-1)
 
-
         self.a = tf.Variable(0.01, trainable=False)
 
         # Sampling N(μ=0, σ=.01) to initialize weights
@@ -99,9 +111,9 @@ class RBMConv(tf.keras.layers.Layer):
                     input_shape[3],
                     self.n_filters,
                 ),
-                stddev=0.01
+                stddev=0.01,
             ),
-            trainable=False
+            trainable=False,
         )
 
     def call(self, inputs):
@@ -121,7 +133,6 @@ class RBMConv(tf.keras.layers.Layer):
 
         return self.sample_binary_prob(self.h_given_v(inputs))
 
-
     def contrastive_divergence(self, v):
         """Function to approximate the gradient where we have a positive(ϕ⁺) and negative(ϕ⁻) grad.
 
@@ -136,12 +147,11 @@ class RBMConv(tf.keras.layers.Layer):
 
         ## Gibbs Sampling
         for _ in range(self.k):
-            #h ~ p(h | v), we are sampling a binary variable from a Bernoulli dist.
+            # h ~ p(h | v), we are sampling a binary variable from a Bernoulli dist.
             h = self.sample_binary_prob(self.h_given_v(v))
 
             # v ~ p(v | h)
             v = self.v_given_h(h)
-
 
         # p(h₍₀₎ = 1 | v₍₀₎, not sampling just calculating probs.
         h_init = self.h_given_v(v_init)
@@ -152,23 +162,39 @@ class RBMConv(tf.keras.layers.Layer):
         # Here we use a trick to transform h in a kernel and being able to use batch convolution
         # v and h have the same batch size, so we put batch size as input channel. On v we put the
         # real input channel as batch size
-        grad_w_0 = tf.nn.conv2d(tf.transpose(v_init, [3,1,2,0]), tf.transpose(h_init, [1,2,0,3]), strides=1, padding="VALID")
-        grad_w_t = tf.nn.conv2d(tf.transpose(v, [3,1,2,0]), tf.transpose(h, [1,2,0,3]), strides=1, padding="VALID")
+        grad_w_0 = tf.nn.conv2d(
+            tf.transpose(v_init, [3, 1, 2, 0]),
+            tf.transpose(h_init, [1, 2, 0, 3]),
+            strides=1,
+            padding="VALID",
+        )
+        grad_w_t = tf.nn.conv2d(
+            tf.transpose(v, [3, 1, 2, 0]),
+            tf.transpose(h, [1, 2, 0, 3]),
+            strides=1,
+            padding="VALID",
+        )
 
         # In the end we have a grad shape = [input channel, height, width, output channel]
         # Where input channel is the real one
-        grad = tf.transpose( grad_w_0 - grad_w_t, [1,2,0,3])
+        grad = tf.transpose(grad_w_0 - grad_w_t, [1, 2, 0, 3])
 
         # Needs to be divided by batch size because all convolutions where applied in batch size depth
         # Not in their real depth (input channel)
-        self.W.assign_add(self.lr * ( grad/tf.cast(self.batch_size, dtype=tf.float32) ))
+        self.W.assign_add(
+            self.lr * (grad / tf.cast(self.batch_size, dtype=tf.float32))
+        )
 
         # Because a is a single value bias for the input tensor all init values where summed then subtracted
         # with the sum of current input values
-        self.a.assign_add(self.lr * (tf.reduce_mean(v_init - v, axis=[0, 1, 2]))[0])
+        self.a.assign_add(
+            self.lr * (tf.reduce_mean(v_init - v, axis=[0, 1, 2]))[0]
+        )
 
         # Same logic as a but here b has n_filter lines so we sum along all axes except the channel one
-        self.b.assign_add(self.lr * (tf.reduce_mean(h_init - h, axis=[0, 1, 2])))
+        self.b.assign_add(
+            self.lr * (tf.reduce_mean(h_init - h, axis=[0, 1, 2]))
+        )
 
         return self.sample_binary_prob(self.h_given_v(v_init))
 
@@ -195,14 +221,16 @@ class RBMConv(tf.keras.layers.Layer):
             Tensor: Tensor of shape [batch_size, Nv, Nv, channels]
         """
         return self.v_activation(
-            (self.a
-            + tf.nn.conv2d_transpose(
-                h,
-                self.W,
-                output_shape=self.v_shape,
-                strides=1,
-                padding="VALID",
-            ))
+            (
+                self.a
+                + tf.nn.conv2d_transpose(
+                    h,
+                    self.W,
+                    output_shape=self.v_shape,
+                    strides=1,
+                    padding="VALID",
+                )
+            )
         )
 
     def h_given_v(self, v):
@@ -221,34 +249,45 @@ class RBMConv(tf.keras.layers.Layer):
 
         Returns:
             Tensor: Desc
-        """ 
+        """
         return tf.math.sigmoid(
-            (self.b
-            + tf.nn.conv2d(
-                v, tf.reverse(self.W, axis=[0, 1]), strides=1, padding="VALID"
-            ))/(tf.square(self.sigma) if self.v_activation == self.sample_gaussian_prob else 1.)
+            (
+                self.b
+                + tf.nn.conv2d(
+                    v,
+                    tf.reverse(self.W, axis=[0, 1]),
+                    strides=1,
+                    padding="VALID",
+                )
+            )
+            / (
+                tf.square(self.sigma)
+                if self.v_activation == self.sample_gaussian_prob
+                else 1.0
+            )
         )
 
     def sample_gaussian_prob(self, mean):
-        """ Function to create and sample from a Multivariate Gaussian distribution
+        """Function to create and sample from a Multivariate Gaussian distribution
 
             Mean (loc) is the relation bewteen H and V given by the deconvolution
             Standard Deviation (scale_diag) is the sigma²
-        
+
         Args:
             mean (Tensor): Result of a deconvolution and used as mean to the distribution
-        
+
         Returns:
             Tensor: New Tensor with all new samples
         """
-        dist = tfd.MultivariateNormalDiag(loc=mean, scale_diag=tf.fill(tf.shape(mean), tf.square(self.sigma)))
-        
+        dist = tfd.MultivariateNormalDiag(
+            loc=mean, scale_diag=tf.fill(tf.shape(mean), tf.square(self.sigma))
+        )
+
         gauss = dist.sample()
 
-        #print(tf.reduce_min(gauss), tf.reduce_max(gauss))
+        # print(tf.reduce_min(gauss), tf.reduce_max(gauss))
 
         return gauss
-
 
     def sample_binary_prob(self, probs):
         """Function that samples from a Bernoulli distribution
@@ -297,7 +336,6 @@ class RBMConv(tf.keras.layers.Layer):
                 f"[!] Wrong shape! Should be [Batch, Height, Width, Channels]. Got [{tf.shape(x)}]"
             )
             sys.exit(-1)
-
 
         # Needs to be updated for some calculations
         self.v_shape = tf.shape(x)

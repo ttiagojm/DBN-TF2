@@ -63,11 +63,21 @@ class RBMBernoulli(tf.keras.layers.Layer):
             input_shape[3],
         )
 
-        self.b = tf.Variable(tf.zeros(shape=(self.hidden_units,)), name="b", trainable=False)
-        self.a = tf.Variable(tf.zeros(shape=(self.flat_shape,)), name="a", trainable=False)
-        
+        self.b = tf.Variable(
+            tf.zeros(shape=(self.hidden_units,)), name="b", trainable=False
+        )
+        self.a = tf.Variable(
+            tf.zeros(shape=(self.flat_shape,)), name="a", trainable=False
+        )
+
         # Sampling N(μ=0, σ=0.1) to initialize weights
-        self.W = tf.Variable(tf.random.normal(shape=(self.flat_shape, self.hidden_units), stddev=.3),name="W", trainable=False)
+        self.W = tf.Variable(
+            tf.random.normal(
+                shape=(self.flat_shape, self.hidden_units), stddev=0.3
+            ),
+            name="W",
+            trainable=False,
+        )
 
     def call(self, inputs, training=True):
         """Receive input and transform it
@@ -76,7 +86,6 @@ class RBMBernoulli(tf.keras.layers.Layer):
         Args:
             inputs (tf.Tensor): Input Tensor
         """
-
 
         inputs = tf.reshape(inputs, [-1, self.flat_shape])
 
@@ -95,7 +104,6 @@ class RBMBernoulli(tf.keras.layers.Layer):
         ϕ⁺ - ϕ⁻ is the constrastive divergence which approximate the derivation of maximum log-likelihood
         """
 
-
         # Save initial input (tf.identity == np.copy)
         v_init = tf.identity(v)
 
@@ -105,9 +113,8 @@ class RBMBernoulli(tf.keras.layers.Layer):
             h = self.sample_binary_prob(self.h_given_v(v))
 
             # v ~ p(v | h)
-            #self.v.assign(self.v_given_h(h))
+            # self.v.assign(self.v_given_h(h))
             v = self.v_given_h(h)
-
 
         # p(h₍ₜ₎ = 1 | v₍ₜ₎)
         h = self.h_given_v(v)
@@ -118,13 +125,15 @@ class RBMBernoulli(tf.keras.layers.Layer):
         ## Constrastive Divergence
 
         # Tensordot allow to do matmul fixed in axes, in this case, fixed in batch axis
-        mul_init_curr = tf.tensordot(v_init, h_init, axes=[0, 0]) - tf.tensordot(v, h, axes=[0, 0])
-        self.W.assign_add( self.lr * mul_init_curr)
-        
+        mul_init_curr = tf.tensordot(
+            v_init, h_init, axes=[0, 0]
+        ) - tf.tensordot(v, h, axes=[0, 0])
+        self.W.assign_add(self.lr * mul_init_curr)
+
         # Average each value along batch axis
         self.a.assign_add(self.lr * tf.reduce_mean(v_init - v, axis=0))
         self.b.assign_add(self.lr * tf.reduce_mean(h_init - h, axis=0))
-        
+
         return h
 
     def v_given_h(self, h):
@@ -138,7 +147,7 @@ class RBMBernoulli(tf.keras.layers.Layer):
         Returns:
             Tensor: Tensor of shape [tf.shape(v)[0]]
         """
-        W_t = tf.transpose(self.W, [1,0])
+        W_t = tf.transpose(self.W, [1, 0])
         return tf.math.sigmoid(self.a + tf.matmul(h, W_t))
 
     def h_given_v(self, v):
