@@ -2,6 +2,7 @@ from crbm import RBMConv
 from rbm import RBMBernoulli
 from utils import show_batch_images
 from tqdm import tqdm
+from exceptions import RBMListEmpty
 import tensorflow as tf
 
 
@@ -15,24 +16,20 @@ class DBN(tf.keras.layers.Layer):
     RBMs are trained separately.
     """
 
-    def __init__(self, rbms: list, learning_decay=.1):
+    def __init__(self, rbms: list):
+
         """
         Args:
-            rbm_type (str): Type of RBM (CRBM or RBM)
-            rbm_num (int): Number of RBM layers
-            decrease_val (int): Value to decrease the size of each hidden layer
-            rbm_params (dict): Parameters for RBM class
+            rbms (list): List with objects of type RBMBernoulli or RBMConv
         """
         super(DBN, self).__init__()
 
         if not rbms:
-            self.rbms = list()
-        else:
-            self.rbms = rbms
-
-        self.learning_decay = learning_decay
+            raise RBMListEmpty
+        self.rbms = rbms
 
     def call(self, inputs, fit=False):
+
         """Function to train DBN
 
         Args:
@@ -58,16 +55,23 @@ class DBN(tf.keras.layers.Layer):
             Tensor: Reconstructed Input Tensor
         """
 
+        # Save original shapes
+        orig_shapes = list()
+
         # Feed forward with Gibbs Sampling
+        # Save shapes for the backwards propagation
         for rbm in self.rbms:
-            rbm.training = False
-            x = rbm(x)
+            # orig_shapes.append(x.shape.as_list())
+            x = rbm.h_given_v(x)
 
         # Here x will be h, because the reconstruction of all RBMs (except first) is the h of the previous RBM
+        # Shapes of each RBM are updated to assure that "Deconvolutions" work well
         for rbm in reversed(self.rbms):
+            # rbm.v_shape = shape
             x = rbm.v_given_h(x)
 
-        return tf.clip_by_value(x, clip_value_min=0., clip_value_max=1.)
+        # Clipping values to ℝ: [0,1]
+        return tf.clip_by_value(x, clip_value_min=0.0, clip_value_max=1.0)
 
     def fit(self, inputs, epochs=1, verbose=False):
         """Function to fit and freeze the model
@@ -84,6 +88,7 @@ class DBN(tf.keras.layers.Layer):
         for epoch in range(epochs):
             print(f"#### Epoch {epoch+1} ####")
 
+            # Reset inputs each epoch
             inputs = orig_input
 
             for rbm in self.rbms:
@@ -95,9 +100,9 @@ class DBN(tf.keras.layers.Layer):
                 # After training, freeze the model
                 rbm.training = False
 
-                # Update learning rate for next epoch
-                rbm.lr *= self.learning_decay
-
-                # Get inputs for the next RBM
-                inputs = inputs.map(lambda x: rbm(
-                    x)).cache().prefetch(tf.data.AUTOTUNE)
+                # Get inputs (h) for the next RBM
+                inputs = (
+                    inputs.map(lambda x: rbm(x))
+                    .cache()
+                    .prefetch(tf.data.AUTOTUNE)
+                )

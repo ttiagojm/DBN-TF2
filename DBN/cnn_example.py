@@ -1,6 +1,6 @@
 import tensorflow as tf
 import tensorflow_datasets as tfds
-from utils import get_datasets, get_pretrain_images, get_shallow_net
+from utils import get_datasets, get_shallow_net
 from dbn import DBN
 from crbm import RBMConv
 
@@ -10,7 +10,7 @@ from crbm import RBMConv
 
 # Get dataset original images
 dataset = "cifar10"
-img_train, img_val, img_test, ds_info = get_datasets(dataset, labels=True)
+img_train, img_val, _, ds_info = get_datasets(dataset, 32, labels=True)
 
 # Epochs for shallow nets to train
 epochs = 2
@@ -20,7 +20,7 @@ in_size = ds_info.features["image"].shape
 
 # Kernel and filter size for RBMs
 k_size = 5
-n_filters = 15
+n_filters = 25
 
 print("#### Model trained with original images ####\n")
 
@@ -54,33 +54,33 @@ print("#### Model trained with reconstructed images ####\n")
 
 # Get valid sizes for hidden layer of each RBM (based on kernel size)
 get_hidden_size = lambda input_size, k_size: input_size - k_size + 1
-#first_hidden_size = get_hidden_size(in_size[0], k_size)
-#sec_hidden_size = get_hidden_size(first_hidden_size, k_size)
+first_hidden_size = get_hidden_size(in_size[0], k_size)
+sec_hidden_size = get_hidden_size(first_hidden_size, k_size)
 
 pre_train = tf.keras.Sequential(
     [
         DBN(
             [
-                RBMConv(16, n_filters, rbm_type="gauss"),
-                RBMConv(8, 32),
+                RBMConv(first_hidden_size, n_filters, sigma=1.0),
+                RBMConv(sec_hidden_size, n_filters),
             ]
         )
     ]
 )
 
-# Train the DBN model
-img_train = img_train.map(lambda x, y: x).cache().prefetch(tf.data.AUTOTUNE)
-pre_train.layers[0].fit(img_train, epochs=1)
+# Train the DBN model (keep batch as 10, bigger batches will mess with autoencoder estimations)
+img_train = img_train.map(lambda x, y: x).unbatch().cache().batch(10).prefetch(tf.data.AUTOTUNE)
+pre_train.layers[0].fit(img_train, epochs=2)
 
 # Recreate dataset with reconstructed images
-r_img_train, r_img_val, r_img_test = get_pretrain_images(
-    pre_train, dataset, labels=True
+img_train, img_val, _, ds_info = get_datasets(
+    dataset, 32, labels=True, autoencoder=pre_train
 )
 
 ## Create a shallow ConvNet using encoded data
 shallow = get_shallow_net((sec_hidden_size, sec_hidden_size, n_filters))
 
-hist_recon = shallow.fit(r_img_train, validation_data=r_img_val, epochs=epochs)
+hist_recon = shallow.fit(img_train, validation_data=img_val, epochs=epochs)
 
 print(
     "Acc: %.3f"
