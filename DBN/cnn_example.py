@@ -1,19 +1,21 @@
 import tensorflow as tf
 import tensorflow_datasets as tfds
-from utils import get_datasets, get_shallow_net
+from utils import get_datasets, preprocess
 from dbn import DBN
 from crbm import RBMConv
 
 """
-	An example to compare a shallow convnet trained with original and autoencoded images 
+    An example to compare a shallow convnet trained with original and autoencoded images 
 """
 
 # Get dataset original images
 dataset = "cifar10"
-img_train, img_val, _, ds_info = get_datasets(dataset, 32, labels=True)
+img_train, img_val, _, ds_info = get_datasets(dataset)
 
-# Epochs for shallow nets to train
-epochs = 2
+# Preprocess datasets
+img_train, img_val = map(
+    lambda x: preprocess(x, 32, True, True), [img_train, img_val]
+)
 
 # Input original size
 in_size = ds_info.features["image"].shape
@@ -22,104 +24,58 @@ in_size = ds_info.features["image"].shape
 k_size = 5
 n_filters = 25
 
-print("#### Model trained with original images ####\n")
 
-# Create a shallow ConvNet using original images
-shallow = get_shallow_net(in_size)
+# Create autoencoder
+dbn = DBN(in_size, k_size, n_filters, 2)
 
-hist_orig = shallow.fit(img_train, validation_data=img_val, epochs=epochs)
+# Train autoencoder
+dbn.fit(img_train)
 
-print(
-    "Acc: %.3f"
-    % (sum(hist_orig.history["accuracy"]) / len(hist_orig.history["accuracy"]))
-)
-print(
-    "Val_Acc: %.3f"
-    % (
-        sum(hist_orig.history["val_accuracy"])
-        / len(hist_orig.history["val_accuracy"])
-    )
-)
-print(
-    "Loss: %.3f"
-    % (sum(hist_orig.history["loss"]) / len(hist_orig.history["loss"]))
-)
-print(
-    "Val_Loss: %.3f"
-    % (sum(hist_orig.history["val_loss"]) / len(hist_orig.history["val_loss"]))
-)
+# Get new reconstructed images
+recon_train = dbn.reconstruct(img_train)
+recon_val = dbn.reconstruct(img_val)
 
-
-print("#### Model trained with reconstructed images ####\n")
-
-# Get valid sizes for hidden layer of each RBM (based on kernel size)
-get_hidden_size = lambda input_size, k_size: input_size - k_size + 1
-first_hidden_size = get_hidden_size(in_size[0], k_size)
-sec_hidden_size = get_hidden_size(first_hidden_size, k_size)
-
-pre_train = tf.keras.Sequential(
+# Train a model with new images
+shallow = tf.keras.Sequential(
     [
-        DBN(
-            [
-                RBMConv(first_hidden_size, n_filters, sigma=1.0),
-                RBMConv(sec_hidden_size, n_filters),
-            ]
-        )
+        tf.keras.Input(shape=in_size),
+        tf.keras.layers.Conv2D(32, (3, 3), activation="relu", padding="same"),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.Conv2D(64, (3, 3), activation="relu", padding="same"),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.GlobalAveragePooling2D(),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(10),
     ]
 )
 
-# Train the DBN model (keep batch as 10, bigger batches will mess with autoencoder estimations)
-img_train = img_train.map(lambda x, y: x).unbatch().cache().batch(10).prefetch(tf.data.AUTOTUNE)
-pre_train.layers[0].fit(img_train, epochs=2)
-
-# Recreate dataset with reconstructed images
-img_train, img_val, _, ds_info = get_datasets(
-    dataset, 32, labels=True, autoencoder=pre_train
+shallow.compile(
+    optimizer=tf.keras.optimizers.SGD(),
+    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=["accuracy"],
 )
 
-## Create a shallow ConvNet using encoded data
-shallow = get_shallow_net((sec_hidden_size, sec_hidden_size, n_filters))
+shallow.fit(recon_train, validation_data=recon_val, epochs=10)
 
-hist_recon = shallow.fit(img_train, validation_data=img_val, epochs=epochs)
 
-print(
-    "Acc: %.3f"
-    % (
-        sum(hist_recon.history["accuracy"])
-        / len(hist_recon.history["accuracy"])
-    )
-)
-print(
-    "Val_Acc: %.3f"
-    % (
-        sum(hist_recon.history["val_accuracy"])
-        / len(hist_recon.history["val_accuracy"])
-    )
-)
-print(
-    "Loss: %.3f"
-    % (sum(hist_recon.history["loss"]) / len(hist_recon.history["loss"]))
-)
-print(
-    "Val_Loss: %.3f"
-    % (
-        sum(hist_recon.history["val_loss"])
-        / len(hist_recon.history["val_loss"])
-    )
+# Train a model with original images
+shallow = tf.keras.Sequential(
+    [
+        tf.keras.Input(shape=in_size),
+        tf.keras.layers.Conv2D(32, (3, 3), activation="relu", padding="same"),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.Conv2D(64, (3, 3), activation="relu", padding="same"),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.GlobalAveragePooling2D(),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(10),
+    ]
 )
 
-orig_acc = hist_orig.history["val_accuracy"]
-recon_acc = hist_recon.history["val_accuracy"]
-orig_loss = hist_orig.history["val_loss"]
-recon_loss = hist_recon.history["val_loss"]
+shallow.compile(
+    optimizer=tf.keras.optimizers.SGD(),
+    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=["accuracy"],
+)
 
-
-# Simple verification if metrics of encoded data model were better than original data model
-for i, (o_acc, o_loss, r_acc, r_loss) in enumerate(
-    zip(orig_acc, orig_loss, recon_acc, recon_loss)
-):
-    if r_acc >= o_acc:
-        print("[!] Atingiu acc na epoch %d" % (i + 1))
-
-    if r_loss <= o_loss:
-        print("[!] Atingiu loss na epoch %d" % (i + 1))
+shallow.fit(img_train, validation_data=img_val, epochs=10)

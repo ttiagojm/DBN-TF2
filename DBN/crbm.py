@@ -1,7 +1,6 @@
 import tensorflow as tf
 import sys
-from utils import set_tensorboard_weights, write_tensorboard_weights
-
+from utils import set_tensorboard_weights, write_tensorboard_weights,check_shape
 
 class RBMConv(tf.keras.layers.Layer):
     """Class that represents a Convolutional Restricted Boltzman Machine
@@ -67,9 +66,10 @@ class RBMConv(tf.keras.layers.Layer):
         super(RBMConv, self).__init__()
 
         self.h = tf.Variable(
-            tf.zeros(shape=(hidden_units, hidden_units, n_filters))
+            tf.zeros(shape=(hidden_units, hidden_units, n_filters)),
+            trainable=False,
         )
-        self.b = tf.Variable(tf.zeros(shape=(n_filters,)))
+        self.b = tf.Variable(tf.zeros(shape=(n_filters,)), trainable=False)
 
         self.n_filters = n_filters
         self.lr = lr
@@ -116,6 +116,8 @@ class RBMConv(tf.keras.layers.Layer):
             input_shape (tuple[int]): Input shape
         """
 
+        self.v_shape = input_shape
+
         # Validate if image is square
         tf.Assert(
             input_shape[1] == input_shape[2],
@@ -128,7 +130,8 @@ class RBMConv(tf.keras.layers.Layer):
         self.a = tf.Variable(
             tf.fill(
                 (input_shape[3],), tf.math.log(proportion / (1 - proportion))
-            )
+            ),
+            trainable=False,
         )
 
         # Sampling N(μ=0, σ=.01) to initialize weights
@@ -145,6 +148,7 @@ class RBMConv(tf.keras.layers.Layer):
                 ),
                 stddev=0.01,
             ),
+            trainable=False,
         )
 
     def call(self, inputs):
@@ -159,14 +163,26 @@ class RBMConv(tf.keras.layers.Layer):
             Tensor: Latent variable (h)
         """
 
-        self.v_shape = inputs.shape.as_list()
-        self.batch_size = self.v_shape[0]
-
-        # Return h as input for next RBM
-        if self.training:
-            return self.contrastive_divergence(inputs)
+        # If shapes doesn't match (batch dim doesn't count), program should stop
+        check_shape(tf.shape(inputs)[1:], self.v_shape[1:])
+        
+        # Save to update batch dim only
+        self.v_shape = tf.shape(inputs)
 
         return self.sample_binary_prob(self.h_given_v(inputs))
+
+    def fit(self, inputs):
+
+        # If shapes doesn't match (batch dim doesn't count), program should stop
+        check_shape(tf.shape(inputs)[1:], self.v_shape[1:])
+
+        # Save to update batch dim only
+        self.v_shape = tf.shape(inputs)
+
+        # Save batch size for calculations in constrastive_divergence
+        self.batch_size = self.v_shape[0].numpy()
+
+        return self.contrastive_divergence(inputs)
 
     def _regularizer_grad(self, v):
         """Symbolic derivation of regularization term presented on
@@ -189,7 +205,7 @@ class RBMConv(tf.keras.layers.Layer):
         if self.sigma is None:
             grad = (self.const_reg / (m)) * -sig * grad_sig
         else:
-            grad = (self.const_reg / (sigma * m)) * -sig * grad_sig
+            grad = (self.const_reg / (self.sigma * m)) * -sig * grad_sig
 
         # Apply over batches
         batch_grad = tf.reduce_mean(grad, axis=0)
@@ -220,7 +236,7 @@ class RBMConv(tf.keras.layers.Layer):
         ## Gibbs Sampling
         for _ in range(self.k):
             # h ~ p(h | v), we are sampling a binary variable from a Bernoulli dist.
-            h = self.sample_binary_prob(self.h_given_v(v))
+            h = self(v)
 
             # v ~ p(v | h)
             v = self.v_given_h(h)
@@ -314,16 +330,13 @@ class RBMConv(tf.keras.layers.Layer):
             Tensor: Tensor of shape [batch_size, Nv, Nv, channels]
 
         """
-
-        # Create a new shape with right batch size
-        shape = [h.shape.as_list()[0]] + self.v_shape[1:]
         return self.v_activation(
             (
                 self.a
                 + tf.nn.conv2d_transpose(
                     h,
                     self.W,
-                    output_shape=shape,
+                    output_shape=self.v_shape,
                     strides=1,
                     padding="VALID",
                 )
@@ -347,10 +360,6 @@ class RBMConv(tf.keras.layers.Layer):
         Returns:
             Tensor: Latent variable with shape [batch_size, hidden_units, hidden_units, n_filters]
         """
-
-        # Keep shape update
-        self.v_shape = v.shape.as_list()
-
         sigmoid_res = tf.math.sigmoid(
             self.b
             + tf.nn.conv2d(

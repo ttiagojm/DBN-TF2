@@ -1,6 +1,4 @@
 import tensorflow as tf
-import time
-
 
 class RBMBernoulli(tf.keras.layers.Layer):
 

@@ -1,12 +1,15 @@
 from crbm import RBMConv
 from rbm import RBMBernoulli
-from utils import show_batch_images
+from utils import show_batch_images, preprocess
+from exceptions import (
+    MismatchCardinality,
+    NonSquareInput,
+)
 from tqdm import tqdm
-from exceptions import RBMListEmpty
 import tensorflow as tf
 
 
-class DBN(tf.keras.layers.Layer):
+class DBN(tf.keras.Model):
     """Class that represents Deep Belief Network
 
     This network samples from joint probabilities over all RBMs.
@@ -16,93 +19,83 @@ class DBN(tf.keras.layers.Layer):
     RBMs are trained separately.
     """
 
-    def __init__(self, rbms: list):
+    calc_hidden_units = lambda in_size, k_size: in_size - k_size + 1
 
-        """
-        Args:
-            rbms (list): List with objects of type RBMBernoulli or RBMConv
-        """
+    def __init__(
+        self,
+        in_size: tuple[int, int, int],
+        k_size: int,
+        n_filters: int,
+        epochs=2,
+    ):
         super(DBN, self).__init__()
 
-        if not rbms:
-            raise RBMListEmpty
-        self.rbms = rbms
+        # Input size validator (h,w,c)
+        if len(in_size) != 3:
+            raise MismatchCardinality(type(in_size))
 
-    def call(self, inputs, fit=False):
+        # Square Input (h==w)
+        if in_size[0] != in_size[1]:
+            raise NonSquareInput()
 
-        """Function to train DBN
+        # Simple 2 Hidden Layer CRBM Model (1 real layer and 1 binary layer, no regularization)
+        real_hidden_size = DBN.calc_hidden_units(in_size[0], k_size)
+        self.real_latent = RBMConv(real_hidden_size, n_filters, sigma=1.0)
 
-        Args:
-            inputs (Tensor): Input Tensor
-            fit (bool, optional): Determine if it is suposed to train or infer each RBM
+        bin_hidden_size = DBN.calc_hidden_units(real_hidden_size, k_size)
+        self.bin_latent = RBMConv(bin_hidden_size, n_filters)
 
-        Returns:
-            Tensor: Latent/Hidden layer Tensor
-        """
-        for rbm in self.rbms:
-            rbm.training = fit
-            inputs = rbm(inputs)
+        self.epochs = epochs
 
-        return inputs
-
-    def get_reconstruction(self, x):
-        """Function to return the reconstruction of x based on W, a and b learned previously
-
-        Args:
-            x (Tensor): Input Tensor
-
-        Returns:
-            Tensor: Reconstructed Input Tensor
-        """
-
-        # Save original shapes
-        orig_shapes = list()
-
-        # Feed forward with Gibbs Sampling
-        # Save shapes for the backwards propagation
-        for rbm in self.rbms:
-            # orig_shapes.append(x.shape.as_list())
-            x = rbm.h_given_v(x)
-
-        # Here x will be h, because the reconstruction of all RBMs (except first) is the h of the previous RBM
-        # Shapes of each RBM are updated to assure that "Deconvolutions" work well
-        for rbm in reversed(self.rbms):
-            # rbm.v_shape = shape
-            x = rbm.v_given_h(x)
-
-        # Clipping values to ℝ: [0,1]
-        return tf.clip_by_value(x, clip_value_min=0.0, clip_value_max=1.0)
-
-    def fit(self, inputs, epochs=1, verbose=False):
-        """Function to fit and freeze the model
-
-        Args:
-            inputs (Tensor): Input Tensor
-            epochs (int, optional): Number of epochs to be trained
-            verbose (bool, optional): Determine if messages are shown or not (for now it's useless)
-        """
+    def fit(self, inputs):
+        # Make sure that inputs have batches of size <= 10
+        inputs = preprocess(
+            inputs,
+            10,
+            labels=False,
+            normalize=False,
+            unbatch=True,
+            shuffle=False,
+        )
 
         # Save original inputs
         orig_input = inputs
 
-        for epoch in range(epochs):
+        for epoch in range(self.epochs):
             print(f"#### Epoch {epoch+1} ####")
 
             # Reset inputs each epoch
             inputs = orig_input
 
-            for rbm in self.rbms:
-                rbm.training = True
-
+            for rbm in [self.real_latent, self.bin_latent]:
                 for i, batch in tqdm(enumerate(inputs)):
-                    rbm(batch)
-
-                # After training, freeze the model
-                rbm.training = False
+                    rbm.fit(batch)
 
                 # Get inputs (h) for the next RBM
                 inputs = (
-                    inputs.map(lambda x: rbm(x))
+                    inputs.map(
+                        lambda x: rbm(x), num_parallel_calls=tf.data.AUTOTUNE
+                    )
                     .cache()
                     .prefetch(tf.data.AUTOTUNE)
                 )
+
+    def call(self, inputs):
+        # Encoder
+        real_hidden = self.real_latent(inputs)
+        bin_hidden = self.bin_latent(real_hidden)
+
+        # Decoder
+        bin_input = self.bin_latent.v_given_h(bin_hidden)
+        real_input = self.real_latent.v_given_h(bin_input)
+
+        return real_input
+
+    def reconstruct(self, inputs):
+        return (
+            inputs.map(
+                lambda x, y: (self(x), y), num_parallel_calls=tf.data.AUTOTUNE
+            )
+            .cache()
+            .prefetch(tf.data.AUTOTUNE)
+        )

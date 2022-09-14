@@ -3,8 +3,8 @@ import tensorflow_datasets as tfds
 import matplotlib.pyplot as plt
 import sys
 import os
-from time import time
 from inspect import signature, _empty
+from exceptions import MismatchShape
 
 
 # Transform ℤ: [0,255] -> ℝ: [0,1]
@@ -19,8 +19,9 @@ def preprocess(
     batch_size: int,
     labels: bool,
     normalize: bool,
-    autoencoder=None,
-):
+    unbatch=False,
+    shuffle=True,
+) -> tf.data.Dataset:
     """Function to preprocess data
 
        Its needed to be able to map the 3 datasets.
@@ -29,60 +30,39 @@ def preprocess(
         ds (tf.data.Dataset): Dataset to iterate
         batch_size (int): Number of images per batch
         labels (bool): Boolean to determine if labels should be returned
-        normalize (bool, optional): Determine if the dataset should or shouldn't be normalized
-        autoencoder (function, optional): Autoencoder function/layer
+        normalize (bool): Determine if the dataset should or shouldn't be normalized
+        unbatch (bool, optional): Unbatch the dataset if True
+        shuffle (bool, optional): Shuffle the dataset if True
 
-    Returns:
-        tuple: Tuple of processed train, validation and test data tensors
     """
     # Normalize Dataset or just return it
     norm_or_not = lambda x: normalizer(x) if normalize else x
 
-    # The order changes if autoencoder is passed because autoencoder needs that the Dataset is batched
-    if autoencoder is None:
-        result = (
-            ds.map(
-                lambda x, y: (norm_or_not(x), y) if labels else norm_or_not(x)
-            )
-            .cache()
-            .shuffle(tf.data.experimental.cardinality(ds))
-            .batch(batch_size)
-            .prefetch(tf.data.AUTOTUNE)
+    if unbatch:
+        ds = ds.unbatch()
+
+    if shuffle:
+        ds = ds.shuffle(tf.data.experimental.cardinality(ds))
+
+    return (
+        ds.batch(batch_size)
+        .map(
+            lambda x, y: (norm_or_not(x), y) if labels else norm_or_not(x),
+            num_parallel_calls=tf.data.AUTOTUNE,
         )
-    else:
-        result = (
-            ds.cache()
-            .shuffle(tf.data.experimental.cardinality(ds))
-            .batch(batch_size)
-            .map(
-                lambda x, y: (autoencoder(norm_or_not(x)), y)
-                if labels
-                else autoencoder(norm_or_not(x))
-            )
-            .prefetch(tf.data.AUTOTUNE)
-        )
-
-    return result
+        .cache()
+        .prefetch(tf.data.AUTOTUNE)
+    )
 
 
-def get_datasets(
-    dataset_name: str,
-    batch_size: int,
-    normalize=True,
-    labels=False,
-    autoencoder=None,
-):
-    """Function get a dataset and prepare it to be used to efficiently on training pipeline
+def get_datasets(dataset_name: str):
+    """Function get a dataset
 
     Args:
         dataset_name (str): Name of the dataset of tensorflow_datasets
-        batch_size (int): Number of images per batch
-        normalize (bool, optional): Determine if the dataset should or shouldn't be normalized
-        labels (bool, optional): Boolean to determine if labels should be returned
-        autoencoder (function, optional): Autoencoder function/layer
 
     Return:
-        tuple: Tuple of processed train, validation and test data tensors
+        tuple: Tuple of train, validation and test data tensors
     """
     (img_train, img_val, img_test), ds_info = tfds.load(
         dataset_name,
@@ -91,15 +71,11 @@ def get_datasets(
         with_info=True,
     )
 
-    norm_train, norm_val, norm_test = map(
-        lambda x: preprocess(x, batch_size, labels, normalize, autoencoder),
-        [img_train, img_val, img_test],
-    )
-    return norm_train, norm_val, norm_test, ds_info
+    return img_train, img_val, img_test, ds_info
 
 
 """
-	Helper functions/classes for RBMs 
+    Helper functions/classes for RBMs 
 
 """
 
@@ -128,43 +104,8 @@ def show_batch_images(batch, pred, num_imgs=5, unormalize=True):
 
 
 """
-	Helper functions/classes for DBN
+    Helper functions/classes for DBN
 """
-
-
-def get_shallow_net(in_size: tuple[int]):
-    """Function to create and compile a shallow convnet for training
-
-    Args:
-        in_size (tuple[int]): Input size
-
-    Returns:
-        Model: Prepared Sequential Model
-    """
-    shallow = tf.keras.Sequential(
-        [
-            tf.keras.Input(shape=in_size),
-            tf.keras.layers.Conv2D(
-                32, (3, 3), activation="relu", padding="same"
-            ),
-            tf.keras.layers.MaxPooling2D(),
-            tf.keras.layers.Conv2D(
-                64, (3, 3), activation="relu", padding="same"
-            ),
-            tf.keras.layers.MaxPooling2D(),
-            tf.keras.layers.GlobalAveragePooling2D(),
-            tf.keras.layers.Flatten(),
-            tf.keras.layers.Dense(10),
-        ]
-    )
-
-    shallow.compile(
-        optimizer=tf.keras.optimizers.SGD(),
-        loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-        metrics=["accuracy"],
-    )
-
-    return shallow
 
 
 def set_tensorboard_weights():
@@ -187,3 +128,18 @@ def write_tensorboard_weights(writer, weights: tf.Tensor, name: str):
     """
     with writer.as_default():
         tf.summary.histogram(name, weights)
+
+
+
+def check_shape(shape_1, shape_2):
+    """Check if 2 TensorShapes are equal
+    
+    Args:
+        shape_1 (TensorShape): First shape
+        shape_2 (TensorShape): Second shape
+    
+    Raises:
+        MismatchShape: If they're different an Exception is raised
+    """
+    if not tf.reduce_all(tf.equal(shape_1, shape_2)):
+        raise MismatchShape(shape_1, shape_2)
