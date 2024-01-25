@@ -1,0 +1,7 @@
+tensorflow
+tensorflow-datasets
+numpy
+matplotlib
+tensorflow_probability
+tqdm
+scikit-learn

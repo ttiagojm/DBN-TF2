@@ -1,111 +1,135 @@
 import tensorflow as tf
 import tensorflow_datasets as tfds
-import matplotlib.pyplot as plt
-import sys
+import numpy as np
 import os
-from inspect import signature, _empty
 from exceptions import MismatchShape
+from datetime import datetime
 
 
-# Transform ℤ: [0,255] -> ℝ: [0,1]
-normalizer = tf.keras.layers.Rescaling(1.0 / 255)
-
-# Transform ℝ: [0,1] -> ℤ: [0,255]
-unormalizer = lambda x: tf.cast(tf.keras.layers.Rescaling(255)(x), tf.int32)
-
-
-def preprocess(
-    ds: tf.data.Dataset,
-    batch_size: int,
-    labels: bool,
-    normalize: bool,
-    unbatch=False,
-    shuffle=True,
-) -> tf.data.Dataset:
-    """Function to preprocess data
-
-       Its needed to be able to map the 3 datasets.
+def get_dataset(batch_size):
+    """Download and normalize dataset, transforming values in Z: [0, 255] to R: [0,1] 
 
     Args:
-        ds (tf.data.Dataset): Dataset to iterate
-        batch_size (int): Number of images per batch
-        labels (bool): Boolean to determine if labels should be returned
-        normalize (bool): Determine if the dataset should or shouldn't be normalized
-        unbatch (bool, optional): Unbatch the dataset if True
-        shuffle (bool, optional): Shuffle the dataset if True
-
+        batch_size (int): Batch size
+    
+    Returns:
+        tf.keras.Dataset: Training Dataset
+        tf.keras.Dataset: Test Dataset
+        tuple: Images shape
     """
-    # Normalize Dataset or just return it
-    norm_or_not = lambda x: normalizer(x) if normalize else x
 
-    if unbatch:
-        ds = ds.unbatch()
-
-    if shuffle:
-        ds = ds.shuffle(tf.data.experimental.cardinality(ds))
-
-    return (
-        ds.batch(batch_size)
-        .map(
-            lambda x, y: (norm_or_not(x), y) if labels else norm_or_not(x),
-            num_parallel_calls=tf.data.AUTOTUNE,
-        )
-        .cache()
-        .prefetch(tf.data.AUTOTUNE)
-    )
-
-
-def get_datasets(dataset_name: str):
-    """Function get a dataset
-
-    Args:
-        dataset_name (str): Name of the dataset of tensorflow_datasets
-
-    Return:
-        tuple: Tuple of train, validation and test data tensors
-    """
-    (img_train, img_val, img_test), ds_info = tfds.load(
-        dataset_name,
-        split=["train[:80%]", "train[80%:]", "test"],
+    (ds_train, ds_test), ds_info = tfds.load(
+        'cifar10',
+        split=['train', 'test'],
+        shuffle_files=True,
         as_supervised=True,
-        with_info=True,
+        with_info=True
     )
 
-    return img_train, img_val, img_test, ds_info
+    def normalize_img(image, label):
+        return tf.cast(image, tf.float32) / 255.0, label
+
+    ds_train = ds_train.map(normalize_img)
+    ds_test = ds_test.map(normalize_img)
+
+    # Drop remainder because CRBM needs to receive exactly batch_size batches
+    ds_train = ds_train.shuffle(ds_info.splits["train"].num_examples).cache().batch(batch_size, drop_remainder=True)
+    ds_train = ds_train.prefetch(tf.data.experimental.AUTOTUNE)
+    
+    ds_test = ds_test.cache().batch(batch_size, drop_remainder=True).prefetch(tf.data.experimental.AUTOTUNE)
+
+    return ds_train, ds_test, ds_info.features["image"].shape
 
 
-"""
-    Helper functions/classes for RBMs 
+class TimingCallback(tf.keras.callbacks.Callback):
+    """
+        Callback for .fit() method of a tf.keras.Model class
 
-"""
+        This callback will count the time elapsed for each epoch and save in history object
+    """
+    def on_epoch_begin(self, epoch, logs=None):
+        self.epoch_start_time = datetime.now()
+
+    def on_epoch_end(self, epoch, logs=None):
+        epoch_end_time = datetime.now()
+        logs['epoch_times'] = (epoch_end_time - self.epoch_start_time).total_seconds()
 
 
-def show_batch_images(batch, pred, num_imgs=5, unormalize=True):
-    """Function to show original and reconstructed images side by side
-            given a batch of images.
+def test_net(ds, ds_test, input_shape):
+    """Create a CNN, train and test with the passed datasets
 
     Args:
-        batch (Tensor): Tensor with a batch of original images
-        pred (Tensor): Tensor with a batch of reconstructed images
-        num_imgs (int, optional): Number of images to show from batch
-        unormalize (bool, optional): Unnormalize images
+        ds (tf.keras.Dataset): Train Dataset
+        ds_test (tf.keras.Dataset): Teste Dataset
+        input_shape (tuple): Input shape
+    
+    Returns:
+        tf.keras.callbacks.History: History object returned from .fit() method
     """
-    for img, img_pred in zip(batch[:num_imgs], pred[:num_imgs]):
+    model = tf.keras.Sequential([
+        tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
+        tf.keras.layers.MaxPooling2D((2,2)),
+        tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+        tf.keras.layers.MaxPooling2D((2,2)),
+        tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+        tf.keras.layers.MaxPooling2D((2,2)),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.Dense(10, activation="softmax")
+    ])
 
-        if unormalize:
-            i, i_pred = unormalizer(img).numpy(), unormalizer(img_pred).numpy()
-        else:
-            i, i_pred = img.numpy(), img_pred.numpy()
+    model.compile(optimizer='adam',
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy'])
 
-        fig, (ax0, ax1) = plt.subplots(1, 2)
-        ax0.imshow(i, interpolation="nearest")
-        ax1.imshow(i_pred, interpolation="nearest")
-        plt.show()
+    timing_callback = TimingCallback()
+
+    # Return history data
+    return model.fit(ds, epochs=10, validation_data=ds_test, callbacks=[timing_callback])
 
 
-"""
-    Helper functions/classes for DBN
-"""
+def transform(cdbn, x):
+    """Transform input using a CDBN
+
+    Args:
+        cdbn (CDBN): Object of CDBN
+        x (tf.keras.Dataset): Batched Dataset
+    
+    Returns:
+        tf.keras.Dataset: Transformed input
+    """
+    x = cdbn.encode(x)
+    return cdbn.decode(x)
+
+
+def preprocessing(cdbn, ds_train, ds_test):
+    """Apply transformation in each dataset, using CDBN 
+
+    Args:
+        cdbn (CDBN): Object of CDBN
+        ds_train (tf.keras.Dataset): Train Dataset
+        ds_test (tf.keras.Dataset): Train Dataset
+    
+    Returns:
+        tf.keras.Dataset: Transformed Train Dataset
+        tf.keras.Dataset: Transformed Train Dataset
+    """
+    transformed_train_data = [(transform(cdbn, x), y) for x, y in ds_train]
+    transformed_test_data = [(transform(cdbn, x), y) for x, y in ds_test]
+
+    train_images, train_labels = zip(*transformed_train_data)
+    test_images, test_labels = zip(*transformed_test_data)
+
+    train_images = np.array(train_images)
+    train_labels = np.array(train_labels)
+    test_images = np.array(test_images)
+    test_labels = np.array(test_labels)
+
+    # Transform each array in a Dataset again
+    ds_transformed_train = tf.data.Dataset.from_tensor_slices((train_images, train_labels)).cache().prefetch(tf.data.experimental.AUTOTUNE)
+    ds_transformed_test = tf.data.Dataset.from_tensor_slices((test_images, test_labels)).cache().prefetch(tf.data.experimental.AUTOTUNE)
+
+    return ds_transformed_train, ds_transformed_test
 
 
 def set_tensorboard_weights():
